@@ -70,7 +70,7 @@ spec:
 
     parameters {
         booleanParam(name: 'SONAR_ENABLED', defaultValue: false, description: '是否运行 SonarQube 代码质量分析（需要先安装 sonar-scanner）')
-        string(name: 'DOCKER_NETWORK', defaultValue: 'nightdeal-backend_default', description: 'Docker 网络名称（服务器上 PostgreSQL/Redis 所在网络）。可通过 `docker network ls` 查看')
+        string(name: 'DOCKER_NETWORK', defaultValue: 'nightdeal_default', description: 'Docker 网络名称（服务器上 PostgreSQL/Redis 所在网络）。可通过 `docker network ls` 查看')
     }
 
     stages {
