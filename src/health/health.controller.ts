@@ -1,7 +1,9 @@
 import { Controller, Get } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 
+@ApiTags('health')
 @Controller('health')
 export class HealthController {
   constructor(
@@ -10,17 +12,31 @@ export class HealthController {
   ) {}
 
   @Get()
+  @ApiOperation({ summary: '健康检查', description: '检查数据库和 Redis 连接状态' })
   async check() {
-    const dbOk = await this.prisma.healthCheck();
-    const redisOk = await this.redis.ping();
-
-    return {
-      status: dbOk && redisOk ? 'ok' : 'error',
+    const checks = {
+      status: 'ok',
       timestamp: new Date().toISOString(),
       services: {
-        database: dbOk ? 'ok' : 'error',
-        redis: redisOk ? 'ok' : 'error',
+        database: 'ok',
+        redis: 'ok',
       },
     };
+
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+    } catch (error) {
+      checks.services.database = 'error';
+      checks.status = 'error';
+    }
+
+    try {
+      await this.redis.ping();
+    } catch (error) {
+      checks.services.redis = 'error';
+      checks.status = 'error';
+    }
+
+    return checks;
   }
 }
