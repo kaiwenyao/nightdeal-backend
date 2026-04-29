@@ -16,7 +16,7 @@ spec:
     # 1. Node.js 容器（用于测试和构建）
     # -------------------------------------------------------
     - name: node
-      image: node:20-alpine
+      image: node:22-alpine
       command:
         - sleep
       args:
