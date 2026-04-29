@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "overrides": {
+    "babel-plugin-istanbul": "^8.0.0",
+    "test-exclude": "^7.0.1"
+  },
   "scripts": {
     "build": "nest build",
     "start": "node dist/main",
