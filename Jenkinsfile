@@ -225,6 +225,14 @@ spec:
                                 echo "正在拉取镜像: ${DOCKER_USER}/nightdeal-backend:latest"
                                 docker pull ${DOCKER_USER}/nightdeal-backend:latest
 
+                                # 创建 Docker 网络（如果不存在）
+                                if ! docker network inspect ${dockerNetwork} > /dev/null 2>&1; then
+                                    echo "创建 Docker 网络: ${dockerNetwork}"
+                                    docker network create ${dockerNetwork}
+                                else
+                                    echo "Docker 网络已存在: ${dockerNetwork}"
+                                fi
+
                                 # 保存旧镜像 ID 用于回滚
                                 OLD_IMAGE=\$(docker inspect --format='{{.Image}}' nightdeal-backend 2>/dev/null || echo "")
 

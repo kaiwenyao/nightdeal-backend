@@ -160,7 +160,7 @@ export class RoomService {
         orderBy: { seatNo: 'asc' },
       });
 
-      const occupiedSet = new Set(occupiedSeats.map((s) => s.seatNo));
+      const occupiedSet = new Set(occupiedSeats.map((s: { seatNo: number }) => s.seatNo));
       let seatNo = 1;
       while (seatNo <= room.maxPlayers && occupiedSet.has(seatNo)) {
         seatNo++;
@@ -284,7 +284,7 @@ export class RoomService {
       where: { userId },
       select: { room: { select: { code: true } } },
     });
-    return players.map((p) => p.room.code);
+    return players.map((p: { room: { code: string } }) => p.room.code);
   }
 
   async getPlayerRole(roomCode: string, userId: string): Promise<string | null> {
