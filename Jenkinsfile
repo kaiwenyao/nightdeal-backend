@@ -218,7 +218,7 @@ spec:
 
                             // 3. 使用 Groovy 生成部署脚本
                             // 注意：globalPrefix('api') 在 main.ts 中设置，所以健康检查路径是 /api/health
-                            def dockerNetwork = params.DOCKER_NETWORK ?: 'nightdeal-backend_default'
+                            def dockerNetwork = params.DOCKER_NETWORK ?: 'nightdeal_default'
                             def deployScript = """#!/bin/bash
                                 set -e
                                 mkdir -p /opt/nightdeal/config
