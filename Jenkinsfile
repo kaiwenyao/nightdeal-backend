@@ -83,11 +83,17 @@ spec:
         stage('2. 安装依赖') {
             steps {
                 container('node') {
-                    sh '''
-                        npm ci
-                        # 生成 Prisma Client（测试可能需要）
-                        npx prisma generate
-                    '''
+                    script {
+                        withCredentials([
+                            file(credentialsId: 'nightdeal-prod-env', variable: 'APP_ENV_FILE')
+                        ]) {
+                            sh '''
+                                cp ${APP_ENV_FILE} .env
+                                npm ci
+                                npx prisma generate
+                            '''
+                        }
+                    }
                 }
             }
         }
