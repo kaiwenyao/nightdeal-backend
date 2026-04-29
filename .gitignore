@@ -23,8 +23,8 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Prisma
-prisma/migrations/
+# Prisma - migrations are committed for version control
+# prisma/migrations/
 
 # Coverage
 coverage/
