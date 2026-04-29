@@ -9,7 +9,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
-    "prestart:dev": "prisma generate",
+    "prestart:dev": "prisma migrate deploy && prisma generate",
     "prestart": "prisma migrate deploy && prisma generate"
   },
   "dependencies": {

@@ -46,29 +46,19 @@ docker compose ps
 # 应看到两个服务都是 healthy 状态
 ```
 
-### 4. 初始化数据库
-
-```bash
-# 生成 Prisma Client
-npx prisma generate
-
-# 创建数据库表（首次运行会创建迁移文件）
-npx prisma migrate dev --name init
-```
-
-### 5. 启动开发服务器
+### 4. 启动开发服务器
 
 ```bash
 npm run start:dev
 ```
 
-服务器启动后会显示：
+首次启动时会自动执行数据库迁移（创建表结构）。服务器启动后会显示：
 
 ```
 NightDeal backend is running on: http://localhost:3000
 ```
 
-### 6. 验证服务
+### 5. 验证服务
 
 ```bash
 curl http://localhost:3000/api/health
