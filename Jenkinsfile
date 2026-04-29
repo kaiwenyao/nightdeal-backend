@@ -84,7 +84,7 @@ spec:
             steps {
                 container('node') {
                     sh '''
-                        npm ci
+                        npm ci --legacy-peer-deps
                         # 生成 Prisma Client（测试可能需要）
                         npx prisma generate
                     '''
