@@ -20,6 +20,6 @@
     "types": ["jest", "node"],
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*", "prisma/generated/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
