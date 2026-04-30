@@ -16,4 +16,4 @@ COPY --from=builder --chown=nestjs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nestjs:nodejs /app/prisma.config.js ./
 USER nestjs
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma migrate deploy && node --experimental-require-module dist/main.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
