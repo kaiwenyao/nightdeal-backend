@@ -8,7 +8,6 @@ import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { RoomModule } from './room/room.module';
-import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
@@ -30,7 +29,6 @@ import { UploadModule } from './upload/upload.module';
     HealthModule,
     AuthModule,
     RoomModule,
-    UploadModule,
   ],
 })
 export class AppModule {}
