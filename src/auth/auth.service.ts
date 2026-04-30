@@ -58,8 +58,8 @@ export class AuthService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
-        ...(data.nickName && { nickName: data.nickName }),
-        ...(data.avatarUrl && { avatarUrl: data.avatarUrl }),
+        ...(data.nickName !== undefined ? { nickName: data.nickName } : {}),
+        ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
       },
     });
 
