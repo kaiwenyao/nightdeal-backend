@@ -7,22 +7,13 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as (
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private prisma: any;
 
-  constructor() {
-    this.initPrisma();
-  }
-
-  private async initPrisma() {
-    const { PrismaClient } = await dynamicImport('../../../prisma/generated/prisma/client.js');
+  async onModuleInit() {
+    const { PrismaClient } = await dynamicImport('../../prisma/generated/prisma/client.js');
     const adapter = new PrismaPg({
       connectionString: process.env.DATABASE_URL,
     });
     this.prisma = new PrismaClient({ adapter });
-  }
-
-  async onModuleInit() {
-    if (this.prisma) {
-      await this.prisma.$connect();
-    }
+    await this.prisma.$connect();
   }
 
   async onModuleDestroy() {
