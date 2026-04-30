@@ -1,6 +1,8 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
+
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private prisma: any;
@@ -10,7 +12,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async initPrisma() {
-    const { PrismaClient } = await import('../../prisma/generated/prisma/client.js');
+    const { PrismaClient } = await dynamicImport('../../../prisma/generated/prisma/client.js');
     const adapter = new PrismaPg({
       connectionString: process.env.DATABASE_URL,
     });

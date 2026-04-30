@@ -28,6 +28,11 @@ export class KickPlayerDto {
   targetUserId: string;
 }
 
+export class KickRoomBodyDto {
+  @IsString()
+  userId: string;
+}
+
 export class CreateRoomDto {
   @IsOptional()
   roleConfig?: {
