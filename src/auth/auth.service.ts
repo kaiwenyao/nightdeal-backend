@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { GatewayTimeoutException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
@@ -98,14 +98,18 @@ export class AuthService {
 
     const url = `https://api.weixin.qq.com/sns/jscode2session?appid=${appId}&secret=${secret}&js_code=${code}&grant_type=authorization_code`;
 
+    const timeoutMs = this.config.get<number>('WX_LOGIN_TIMEOUT_MS') || 8000;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let data: WeChatSessionResponse;
     try {
       const resp = await fetch(url, { signal: controller.signal });
       data = (await resp.json()) as WeChatSessionResponse;
-    } catch {
-      throw new UnauthorizedException('微信登录请求超时，请稍后重试');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new GatewayTimeoutException('微信登录请求超时，请稍后重试');
+      }
+      throw new ServiceUnavailableException('微信登录服务暂不可用，请稍后重试');
     } finally {
       clearTimeout(timeout);
     }

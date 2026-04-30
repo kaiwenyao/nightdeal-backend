@@ -12,6 +12,7 @@ import * as Joi from 'joi';
         REDIS_URL: Joi.string().required(),
         WX_APPID: Joi.string().required(),
         WX_SECRET: Joi.string().required(),
+        WX_LOGIN_TIMEOUT_MS: Joi.number().default(8000),
         JWT_SECRET: Joi.string().min(32).required(),
       }),
     }),
