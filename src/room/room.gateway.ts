@@ -10,6 +10,7 @@ const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 @WebSocketGateway({
   cors: { origin: process.env.CORS_ORIGIN || '*' },
   namespace: '/room',
+  allowEIO3: true,
 })
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -25,7 +26,13 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   async handleConnection(client: Socket) {
-    const token = client.handshake.auth?.token;
+    const authToken = client.handshake.auth?.token;
+    const queryTokenRaw = client.handshake.query?.token;
+    const queryToken = Array.isArray(queryTokenRaw) ? queryTokenRaw[0] : queryTokenRaw;
+    const token =
+      (typeof authToken === 'string' && authToken.trim()) ||
+      (typeof queryToken === 'string' && queryToken.trim()) ||
+      undefined;
     if (!token) {
       client.emit('room:error', { message: '未登录' });
       client.disconnect();
