@@ -19,6 +19,6 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["jest", "node"]
   },
-  "include": ["src/**/*", "prisma.config.ts"],
-  "exclude": ["node_modules", "dist", "prisma/generated"]
+  "include": ["src/**/*", "prisma/generated/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
