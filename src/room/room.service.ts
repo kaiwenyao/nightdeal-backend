@@ -153,7 +153,7 @@ export class RoomService {
     const playerCount = await this.getPlayerCount(roomCode);
     if (playerCount >= room.maxPlayers) return { error: '房间已满' };
 
-    const player = await this.prisma.$transaction(async (tx) => {
+    const player = await this.prisma.$transaction(async (tx: any) => {
       const occupiedSeats = await tx.roomPlayer.findMany({
         where: { roomId: room.id },
         select: { seatNo: true },
@@ -251,7 +251,7 @@ export class RoomService {
       config,
     );
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       for (const assignment of assignments) {
         await tx.roomPlayer.updateMany({
           where: { roomId: room.id, userId: assignment.userId },

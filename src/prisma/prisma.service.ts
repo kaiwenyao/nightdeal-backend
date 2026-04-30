@@ -1,30 +1,50 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '../../prisma/generated/prisma/client.js';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService implements OnModuleInit, OnModuleDestroy {
+  private prisma: any;
+
   constructor() {
+    this.initPrisma();
+  }
+
+  private async initPrisma() {
+    const { PrismaClient } = await import('../../prisma/generated/prisma/client.js');
     const adapter = new PrismaPg({
       connectionString: process.env.DATABASE_URL,
     });
-    super({ adapter });
+    this.prisma = new PrismaClient({ adapter });
   }
 
   async onModuleInit() {
-    await this.$connect();
+    if (this.prisma) {
+      await this.prisma.$connect();
+    }
   }
 
   async onModuleDestroy() {
-    await this.$disconnect();
+    if (this.prisma) {
+      await this.prisma.$disconnect();
+    }
   }
 
   async healthCheck(): Promise<boolean> {
     try {
-      await this.$queryRaw`SELECT 1`;
-      return true;
+      if (this.prisma) {
+        await this.prisma.$queryRaw`SELECT 1`;
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
   }
+
+  get user() { return this.prisma?.user; }
+  get room() { return this.prisma?.room; }
+  get roomPlayer() { return this.prisma?.roomPlayer; }
+  get gameRecord() { return this.prisma?.gameRecord; }
+  get $transaction() { return this.prisma?.$transaction.bind(this.prisma); }
+  get $queryRaw() { return this.prisma?.$queryRaw.bind(this.prisma); }
 }

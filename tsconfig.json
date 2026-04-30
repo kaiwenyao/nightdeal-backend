@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "module": "Node16",
-    "moduleResolution": "Node16",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,
@@ -17,7 +17,8 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*", "prisma/generated/**/*"],
   "exclude": ["node_modules", "dist"]
