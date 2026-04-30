@@ -33,3 +33,6 @@ coverage/
 # Docker volumes
 pgdata/
 redisdata/
+
+# Uploaded files
+uploads/
