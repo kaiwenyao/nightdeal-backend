@@ -8,6 +8,7 @@ import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { RoomModule } from './room/room.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RoomModule } from './room/room.module';
     PrismaModule,
     RedisModule,
     HealthModule,
+    StorageModule,
     AuthModule,
     RoomModule,
   ],

@@ -26,4 +26,5 @@ export class AuthController {
     const user = await this.authService.updateProfile(req.user.id, dto);
     return { user };
   }
+
 }
