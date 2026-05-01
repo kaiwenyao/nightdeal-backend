@@ -336,7 +336,7 @@ export class RoomService {
     }
 
     // If nothing to update, return current room info
-    if (!updates.maxPlayers && !updates.roleConfig) {
+    if (updates.maxPlayers === undefined && updates.roleConfig === undefined) {
       const current = await this.getRoom(roomCode);
       return current as RoomInfo;
     }
