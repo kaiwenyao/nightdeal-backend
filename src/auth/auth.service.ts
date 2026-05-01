@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { WeChatApiException } from '../common/exceptions/wechat-api.exception';
 
 interface WeChatSessionResponse {
   openid: string;
@@ -115,7 +116,7 @@ export class AuthService {
     }
 
     if (data.errcode) {
-      throw new UnauthorizedException(`微信登录失败: ${data.errmsg}`);
+      throw new WeChatApiException(`微信登录失败: ${data.errmsg}`);
     }
 
     return { openid: data.openid, session_key: data.session_key };

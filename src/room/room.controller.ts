@@ -142,7 +142,7 @@ export class RoomController {
           nickName: p.user.nickName,
           avatarUrl: p.user.avatarUrl,
         },
-        joinedAt: new Date(),
+        joinedAt: p.joinedAt ?? undefined,
       })),
       createdAt: room.createdAt,
     };

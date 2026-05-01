@@ -361,24 +361,25 @@ Client → Server:
 ─────────────────────────────────────────────────────────
   event              | payload                | 说明
 ─────────────────────────────────────────────────────────
-  room:join          | { roomCode }           | 加入房间
-  room:leave         | { roomCode }           | 离开房间
-  room:start         | { roomCode }           | 房主开始游戏（分配身份）
-  room:kick          | { roomCode, userId }   | 踢人（仅房主）
-  player:update      | { nickName, avatarUrl }| 更新玩家信息
+  room:join          | { roomCode }                       | 加入房间
+  room:leave         | { roomCode }                       | 离开房间
+  room:start         | { roomCode }                       | 房主开始游戏（分配身份）
+  room:kick          | { roomCode, targetUserId }         | 踢人（仅房主）
+  player:update      | { nickName?, avatarUrl? }          | 更新玩家信息（昵称/头像）
 ─────────────────────────────────────────────────────────
 
 Server → Client:
 ─────────────────────────────────────────────────────────
-  event              | payload                | 说明
+  event              | payload                                  | 说明
 ─────────────────────────────────────────────────────────
-  room:player-joined | { player, playerCount }| 有人加入
-  room:player-left   | { userId, playerCount }| 有人离开
-  room:started       | { yourRole }           | 游戏开始，收到自己的角色
-  room:state         | { room, players }      | 完整房间状态（加入时推送）
-  room:offline       | { userId }             | 某玩家断线
-  room:reconnected   | { userId }             | 某玩家重连
-  room:error         | { message }            | 错误信息
+  room:player-joined | { player, playerCount }                  | 有人加入
+  room:player-left   | { userId, playerCount }                  | 有人离开
+  room:started       | { yourRole }                             | 游戏开始，单播自己的角色
+  room:state         | { room, players }                        | 完整房间状态（加入时推送）
+  room:offline       | { userId }                               | 某玩家断线
+  room:reconnected   | { userId }                               | 某玩家重连
+  player:updated     | { userId, nickName?, avatarUrl? }        | 某玩家更新了昵称/头像
+  room:error         | { message }                              | 错误信息
 ─────────────────────────────────────────────────────────
 ```
 
@@ -564,7 +565,16 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   async handleConnection(client: Socket) {
-    const token = client.handshake.auth?.token;
+    // 兼容两种 token 注入方式：
+    //   1) Socket.IO 标准 `auth: { token }`（推荐）
+    //   2) 引擎握手 query string `?token=...`（小程序自实现 Socket.IO 协议时的兜底）
+    const authToken = client.handshake.auth?.token;
+    const queryTokenRaw = client.handshake.query?.token;
+    const queryToken = Array.isArray(queryTokenRaw) ? queryTokenRaw[0] : queryTokenRaw;
+    const token =
+      (typeof authToken === 'string' && authToken.trim()) ||
+      (typeof queryToken === 'string' && queryToken.trim()) ||
+      undefined;
     if (!token) {
       client.emit('room:error', { message: '未登录' });
       client.disconnect();
@@ -978,9 +988,17 @@ nightdeal-backend/
 |------|------|------|------|
 | POST | `/api/auth/login` | 微信登录 | 否 |
 | POST | `/api/auth/update-profile` | 更新头像昵称 | 是 |
+| POST | `/api/auth/avatar/credential` | 获取阿里云 OSS PostObject 直传凭证 | 是 |
+| POST | `/api/auth/avatar/upload` | 服务端压缩并上传头像（multipart `avatar` 字段） | 是 |
 | POST | `/api/rooms` | 创建房间 | 是 |
 | GET | `/api/rooms/:code` | 获取房间信息 | 是 |
+| POST | `/api/rooms/:code/join` | 加入房间（REST 入口，房间页 Socket 进房前可使用） | 是 |
+| POST | `/api/rooms/:code/start` | 房主开始游戏（与 `room:start` Socket 事件等效） | 是 |
+| POST | `/api/rooms/:code/kick` | 房主踢人（与 `room:kick` Socket 事件等效），body：`{ userId }` | 是 |
 | GET | `/api/rooms/:code/my-role` | 获取自己的角色（游戏开始后，断线重连用） | 是 |
+| GET | `/api/health` | 健康检查（DB / Redis 连通性） | 否 |
+
+> 头像上传双通道并存：`/auth/avatar/credential` 适用于小程序直传 OSS（PostObject 协议）；`/auth/avatar/upload` 适用于服务端压缩+OSS 上传，前端可二选一。当前小程序端默认使用 `/auth/avatar/upload`。
 
 ### 6.2 WebSocket 事件
 
@@ -1155,7 +1173,7 @@ JWT_SECRET=your_jwt_secret_here
 
 ---
 
-## 9. Docker Compose（开发环境）
+## 10. Docker Compose（开发环境）
 
 ```yaml
 # docker-compose.yml
@@ -1210,7 +1228,7 @@ volumes:
 
 ---
 
-## 10. 阿瓦隆角色速查
+## 11. 阿瓦隆角色速查
 
 | 角色 | 阵营 | 特殊能力 |
 |------|------|----------|
@@ -1236,7 +1254,7 @@ volumes:
 
 ---
 
-## 11. 安全要求
+## 12. 安全要求
 
 - `session_key` 禁止下发到客户端，存入 Redis 时应加密（AES-256）
 - 角色分配后仅通过单播推送给对应玩家，不广播
@@ -1253,9 +1271,9 @@ volumes:
 
 ---
 
-## 12. 测试策略
+## 13. 测试策略
 
-### 12.1 测试框架
+### 13.1 测试框架
 
 | 类型 | 工具 | 用途 |
 |------|------|------|
@@ -1265,7 +1283,7 @@ volumes:
 | E2E测试 | Playwright | 模拟完整用户流程 |
 | 性能测试 | Artillery | 负载测试和压力测试 |
 
-### 12.2 单元测试
+### 13.2 单元测试
 
 **测试文件结构**：
 ```
@@ -1354,7 +1372,7 @@ describe('RoleAssigner', () => {
 - 核心模块（auth、room）：90%+
 - 角色分配算法：100%
 
-### 12.3 集成测试
+### 13.3 集成测试
 
 **数据库测试**（使用Testcontainers）：
 
@@ -1417,7 +1435,7 @@ describe('Room Integration', () => {
 });
 ```
 
-### 12.4 WebSocket测试
+### 13.4 WebSocket测试
 
 ```typescript
 // test/integration/websocket.integration.spec.ts
@@ -1472,7 +1490,7 @@ describe('WebSocket Integration', () => {
 });
 ```
 
-### 12.5 性能测试
+### 13.5 性能测试
 
 **Artillery配置** (`test/performance/load-test.yml`):
 
@@ -1527,7 +1545,7 @@ scenarios:
 - WebSocket连接数：支持1000+并发
 - 房间创建：50次/秒
 
-### 12.6 测试运行命令
+### 13.6 测试运行命令
 
 ```bash
 # 单元测试
@@ -1567,9 +1585,9 @@ npm run test:all
 
 ---
 
-## 13. 部署指南
+## 14. 部署指南
 
-### 13.1 生产环境要求
+### 14.1 生产环境要求
 
 | 组件 | 版本 | 最低配置 |
 |------|------|----------|
@@ -1579,7 +1597,7 @@ npm run test:all
 | Docker | 24+ | - |
 | Docker Compose | 2.20+ | - |
 
-### 13.2 环境变量配置
+### 14.2 环境变量配置
 
 **生产环境** (`.env.production`):
 
@@ -1646,7 +1664,7 @@ import * as Joi from 'joi';
 export class AppConfigModule {}
 ```
 
-### 13.3 Docker配置
+### 14.3 Docker配置
 
 **生产环境Dockerfile** (`Dockerfile`):
 
@@ -1792,7 +1810,7 @@ networks:
     driver: bridge
 ```
 
-### 13.4 Nginx配置
+### 14.4 Nginx配置
 
 **nginx.conf**:
 
@@ -1884,7 +1902,7 @@ http {
 }
 ```
 
-### 13.5 部署步骤
+### 14.5 部署步骤
 
 **1. 准备服务器**：
 
@@ -1962,7 +1980,7 @@ sudo cp /etc/letsencrypt/live/your-domain.com/privkey.pem nginx/ssl/key.pem
 docker-compose -f docker-compose.prod.yml restart nginx
 ```
 
-### 13.6 监控和日志
+### 14.6 监控和日志
 
 **Prometheus配置** (`prometheus.yml`):
 
@@ -2072,7 +2090,7 @@ async function bootstrap() {
 bootstrap();
 ```
 
-### 13.7 备份策略
+### 14.7 备份策略
 
 **数据库备份脚本** (`scripts/backup.sh`):
 
@@ -2111,7 +2129,7 @@ echo "[$(date)] Backup completed: nightdeal_$TIMESTAMP.dump" >> /var/log/nightde
 0 4 * * 0 find /var/log/nightdeal*.log.* -mtime +30 -delete
 ```
 
-### 13.8 故障恢复
+### 14.8 故障恢复
 
 **数据库恢复**：
 
@@ -2187,9 +2205,9 @@ export class HealthController {
 
 ---
 
-## 14. Redis Adapter 配置（多实例扩展）
+## 15. Redis Adapter 配置（多实例扩展）
 
-### 14.1 Redis IO Adapter 实现
+### 15.1 Redis IO Adapter 实现
 
 ```typescript
 // src/redis/redis-io.adapter.ts
@@ -2232,7 +2250,7 @@ export class RedisIoAdapter extends IoAdapter {
 }
 ```
 
-### 14.2 安装依赖
+### 15.2 安装依赖
 
 ```bash
 npm install @socket.io/redis-adapter redis
@@ -2242,9 +2260,9 @@ npm install @socket.io/redis-adapter redis
 
 ---
 
-## 15. API详细规范
+## 16. API 详细规范
 
-### 14.1 通用响应格式
+### 16.1 通用响应格式
 
 **成功响应**：
 
@@ -2269,7 +2287,7 @@ npm install @socket.io/redis-adapter redis
 }
 ```
 
-### 14.2 错误码定义
+### 16.2 错误码定义
 
 | 错误码 | HTTP状态码 | 说明 |
 |--------|-----------|------|
@@ -2290,7 +2308,7 @@ npm install @socket.io/redis-adapter redis
 | 50002 | 500 | 微信接口错误 |
 | 50003 | 500 | 数据库错误 |
 
-### 14.3 REST API详细规范
+### 16.3 REST API 详细规范
 
 #### POST /api/auth/login
 
@@ -2568,7 +2586,7 @@ Authorization: Bearer <token>
 }
 ```
 
-### 14.4 WebSocket事件详细规范
+### 16.4 WebSocket 事件详细规范
 
 #### room:join
 

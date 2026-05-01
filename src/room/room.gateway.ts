@@ -1,9 +1,11 @@
 import { WebSocketGateway, WebSocketServer, SubscribeMessage, ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
-import { UsePipes, ValidationPipe, Logger } from '@nestjs/common';
+import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { RoomService } from './room.service';
 import { AuthService } from '../auth/auth.service';
 import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto } from './dto';
+import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
+import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -12,6 +14,8 @@ const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
   namespace: '/room',
   allowEIO3: true,
 })
+@UseGuards(WsJwtGuard)
+@UseFilters(WsExceptionFilter)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()

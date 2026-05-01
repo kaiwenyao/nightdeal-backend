@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { RoleConfig, roleConfigSchema } from './role-config.schema';
 import { assignRoles, RoleAssignment } from './role-assigner';
+import { assignSeat } from './seat-assigner';
 import { nanoid } from 'nanoid';
 
 export interface RoomInfo {
@@ -23,6 +24,7 @@ export interface PlayerInfo {
   seatNo: number;
   role?: string;
   isOnline: boolean;
+  joinedAt: Date;
   user: { id: string; nickName: string; avatarUrl: string };
 }
 
@@ -75,6 +77,7 @@ export class RoomService {
         seatNo: p.seatNo,
         role: p.role || undefined,
         isOnline: !isOffline,
+        joinedAt: p.joinedAt ?? undefined,
         user: {
           id: p.user.id,
           nickName: p.user.nickName,
@@ -111,6 +114,7 @@ export class RoomService {
       seatNo: player.seatNo,
       role: player.role || undefined,
       isOnline: !isOffline,
+      joinedAt: player.joinedAt,
       user: {
         id: player.user.id,
         nickName: player.user.nickName,
@@ -153,45 +157,28 @@ export class RoomService {
     const playerCount = await this.getPlayerCount(roomCode);
     if (playerCount >= room.maxPlayers) return { error: '房间已满' };
 
-    const player = await this.prisma.$transaction(async (tx: any) => {
-      const occupiedSeats = await tx.roomPlayer.findMany({
-        where: { roomId: room.id },
-        select: { seatNo: true },
-        orderBy: { seatNo: 'asc' },
-      });
-
-      const occupiedSet = new Set(occupiedSeats.map((s: { seatNo: number }) => s.seatNo));
-      let seatNo = 1;
-      while (seatNo <= room.maxPlayers && occupiedSet.has(seatNo)) {
-        seatNo++;
-      }
-
-      if (seatNo > room.maxPlayers) {
-        throw new Error('房间已满');
-      }
-
-      return tx.roomPlayer.create({
-        data: {
-          roomId: room.id,
-          userId,
-          seatNo,
-        },
-        include: { user: true },
-      });
-    });
+    const playerRecord = await assignSeat(this.prisma, room.id, userId, room.maxPlayers);
 
     await this.redis.hset(`room:${roomCode}`, 'playerCount', String(playerCount + 1));
 
+    const playerUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!playerUser) {
+      throw new Error('用户不存在');
+    }
+
     const players = await this.getPlayers(roomCode);
     const playerInfo: PlayerInfo = {
-      id: player.id,
-      userId: player.userId,
-      seatNo: player.seatNo,
+      id: playerRecord.id,
+      userId: playerRecord.userId,
+      seatNo: playerRecord.seatNo,
       isOnline: true,
+      joinedAt: playerRecord.joinedAt,
       user: {
-        id: player.user.id,
-        nickName: player.user.nickName,
-        avatarUrl: player.user.avatarUrl,
+        id: playerUser.id,
+        nickName: playerUser.nickName,
+        avatarUrl: playerUser.avatarUrl,
       },
     };
 

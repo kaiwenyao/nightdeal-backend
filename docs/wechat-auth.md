@@ -161,16 +161,16 @@ class StorageService {
 
 **RAM 子账号建议**（方式 A）：单独创建一个仅有 `oss:PutObject` 到 `avatars/*` 路径权限的 RAM 子账号，AK/SK 入 `.env`，与项目主账号隔离。
 
-**新增端点**：
+**端点**：
 
 | Method | Path | Guard | 说明 |
 |---|---|---|---|
-| `POST` | `/auth/avatar/credential` | `AuthGuard` | 已登录用户请求一次性上传凭证 |
+| `POST` | `/auth/avatar/credential` | `AuthGuard` | 下发一次性 OSS PostObject 凭证，前端 `wx.uploadFile` 直传 OSS |
+| `POST` | `/auth/avatar/upload` | `AuthGuard` | **已实现**。前端 `multipart/form-data` 上传字段 `avatar`（≤5MB，jpg/png/webp/gif），服务端用 `sharp` 压缩为 256×256 JPEG 并写入 OSS，返回 `{ avatarUrl }` |
 
-挂载位置二选一：
+> **当前小程序端默认使用 `/auth/avatar/upload`**（见 `nightdeal-minip/pages/index/index.ts → uploadAvatarToServer`）。`/credential` 通道已实现并保留，便于将来切换为前端直传 OSS（节省服务器带宽与 CPU）。两条通道返回的 `avatarUrl` 都落在同一 `AVATAR_URL_PREFIX` 白名单下，可被 `update-profile` DTO 接受。
 
-- 独立 `StorageController`（推荐，未来可扩展到房间封面等）
-- 直接复用 `AuthController`（最快落地）
+挂载位置：独立 `StorageController`（位于 `src/storage/storage.controller.ts`，挂载在 `/auth/avatar/*` 路径下，未来可扩展到房间封面等）。
 
 ### 3.2 头像 URL 域名白名单校验
 

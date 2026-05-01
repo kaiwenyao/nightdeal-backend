@@ -3,6 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -14,6 +15,7 @@ async function bootstrap() {
   });
 
   app.useLogger(app.get(Logger));
+  app.use(helmet());
 
   const configService = app.get(ConfigService);
   const redisIoAdapter = new RedisIoAdapter(app, configService);
@@ -22,8 +24,9 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
+  const corsOrigin = configService.get('CORS_ORIGIN') || '*';
   app.enableCors({
-    origin: '*',
+    origin: corsOrigin,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
