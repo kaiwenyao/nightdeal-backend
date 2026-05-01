@@ -84,9 +84,10 @@ export class StorageService {
     const keyPrefix =
       this.configService.get<string>('OSS_AVATAR_KEY_PREFIX') || 'avatars/';
     const timestamp = Date.now();
-    const key = `${keyPrefix}${userId}/${timestamp}.jpg`;
+    const relativeKey = `${userId}/${timestamp}.jpg`;
+    const ossKey = `${keyPrefix}${relativeKey}`;
 
-    const result = await this.ossClient.put(key, fileBuffer, {
+    const result = await this.ossClient.put(ossKey, fileBuffer, {
       headers: {
         'Content-Type': 'image/jpeg',
         'Cache-Control': 'public, max-age=31536000',
@@ -95,9 +96,8 @@ export class StorageService {
 
     this.logger.log(`Avatar uploaded to OSS: ${result.name}`);
 
-    // 构建公开访问 URL
     const avatarUrlPrefix = this.configService.get<string>('AVATAR_URL_PREFIX')!;
-    return `${avatarUrlPrefix}${key}`;
+    return `${avatarUrlPrefix}${relativeKey}`;
   }
 
   /**
