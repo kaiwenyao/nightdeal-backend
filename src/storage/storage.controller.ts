@@ -59,7 +59,12 @@ export class StorageController {
       throw new BadRequestException('图片大小不能超过 5MB');
     }
 
-    const avatarUrl = await this.storageService.compressAndUploadAvatar(file.buffer, userId);
-    return { avatarUrl };
+    try {
+      const avatarUrl = await this.storageService.compressAndUploadAvatar(file.buffer, userId);
+      return { avatarUrl };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '图片处理失败';
+      throw new BadRequestException(`头像处理失败: ${message}`);
+    }
   }
 }
