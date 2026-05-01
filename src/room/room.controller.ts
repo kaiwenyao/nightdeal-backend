@@ -9,10 +9,11 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Patch,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { RoomService } from './room.service';
-import { CreateRoomDto, KickRoomBodyDto } from './dto';
+import { CreateRoomDto, KickRoomBodyDto, UpdateRoomSettingsDto } from './dto';
 import { AuthGuard } from '../auth/auth.guard';
 
 @ApiTags('rooms')
@@ -77,6 +78,25 @@ export class RoomController {
       throw new BadRequestException(result.error);
     }
     return result;
+  }
+
+  @Patch(':code/settings')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '更新房间设置', description: '房主更新房间人数和角色配置' })
+  @UseGuards(AuthGuard)
+  async updateRoomSettings(@Request() req: any, @Param('code') raw: string, @Body() dto: UpdateRoomSettingsDto) {
+    const code = raw.toUpperCase();
+    const result = await this.roomService.updateRoomSettings(code, req.user.id, {
+      maxPlayers: dto.maxPlayers,
+      roleConfig: dto.roleConfig as any,
+    });
+    if ('error' in result) {
+      const err = (result as any).error;
+      if (err === '房间不存在') throw new NotFoundException(err);
+      if (err === '仅房主可以修改设置') throw new ForbiddenException(err);
+      throw new BadRequestException(err);
+    }
+    return this.buildRoomDetail(code);
   }
 
   @Get(':code/my-role')

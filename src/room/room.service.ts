@@ -302,6 +302,59 @@ export class RoomService {
     });
   }
 
+  async updateRoomSettings(
+    roomCode: string,
+    hostId: string,
+    data: { maxPlayers?: number; roleConfig?: RoleConfig },
+  ): Promise<RoomInfo | { error: string }> {
+    const room = await this.getRoom(roomCode);
+    if (!room) {
+      return { error: '房间不存在' };
+    }
+    if (room.hostId !== hostId) {
+      return { error: '仅房主可以修改设置' };
+    }
+    if (room.status !== 'WAITING') {
+      return { error: '游戏已开始，无法修改设置' };
+    }
+
+    const updates: Partial<{ maxPlayers: number; roleConfig: RoleConfig }> = {};
+
+    if (typeof data.maxPlayers !== 'undefined') {
+      const playerCount = await this.getPlayerCount(roomCode);
+      if (data.maxPlayers < playerCount) {
+        return {
+          error: `当前已有${playerCount}名玩家，无法减少至${data.maxPlayers}人`,
+        };
+      }
+      updates.maxPlayers = data.maxPlayers;
+    }
+
+    if (typeof data.roleConfig !== 'undefined') {
+      const parsed = roleConfigSchema.parse(data.roleConfig);
+      updates.roleConfig = parsed;
+    }
+
+    // If nothing to update, return current room info
+    if (!updates.maxPlayers && !updates.roleConfig) {
+      const current = await this.getRoom(roomCode);
+      return current as RoomInfo;
+    }
+
+    const updated = await this.prisma.room.update({
+      where: { id: room.id },
+      data: updates,
+    });
+
+    if (typeof updates.maxPlayers !== 'undefined') {
+      await this.redis.hset(`room:${roomCode}`, 'maxPlayers', String(updates.maxPlayers));
+    }
+
+    // Return refreshed room info
+    const refreshed = await this.getRoom(roomCode);
+    return refreshed as RoomInfo;
+  }
+
   @Cron('*/5 * * * *')
   async cleanupOfflinePlayers(): Promise<void> {
     this.logger.log('Running offline player cleanup...');

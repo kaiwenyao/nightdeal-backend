@@ -3,7 +3,7 @@ import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters } from '@nestjs
 import { Server, Socket } from 'socket.io';
 import { RoomService } from './room.service';
 import { AuthService } from '../auth/auth.service';
-import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto } from './dto';
+import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto, SettingsUpdateDto } from './dto';
 import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 
@@ -180,6 +180,29 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
         target?.emit('room:started', { yourRole: assignment.role });
       }
     }
+  }
+
+  @SubscribeMessage('room:settings-update')
+  async handleSettingsUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: SettingsUpdateDto,
+  ) {
+    const userId = client.data.userId;
+    const result = await this.roomService.updateRoomSettings(payload.roomCode, userId, {
+      maxPlayers: payload.maxPlayers,
+      roleConfig: payload.roleConfig as any,
+    });
+
+    if (typeof result === 'object' && 'error' in result) {
+      client.emit('room:error', { message: (result as any).error });
+      return;
+    }
+
+    // Broadcast to all room members including sender
+    const maxPlayers = (result as any).maxPlayers;
+    const roleConfig = (result as any).roleConfig;
+    client.to(payload.roomCode).emit('room:settings-updated', { maxPlayers, roleConfig });
+    client.emit('room:settings-updated', { maxPlayers, roleConfig });
   }
 
   @SubscribeMessage('player:update')
