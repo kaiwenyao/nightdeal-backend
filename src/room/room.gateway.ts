@@ -141,6 +141,31 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  /**
+   * After DB kick succeeds (via WebSocket or HTTP): notify kicked sockets,
+   * broadcast player-left + room state to remaining clients.
+   */
+  async notifyClientsAfterKick(roomCode: string, targetUserId: string): Promise<void> {
+    const targetSocketIds = this.userSocketMap.get(targetUserId);
+    if (targetSocketIds) {
+      for (const targetSocketId of targetSocketIds) {
+        const targetSocket = this.server.sockets.get(targetSocketId);
+        if (targetSocket) {
+          targetSocket.emit('room:error', { message: '你已被房主踢出房间' });
+          targetSocket.leave(roomCode);
+        }
+      }
+    }
+
+    const playerCount = await this.roomService.getPlayerCount(roomCode);
+    this.server.to(roomCode).emit('room:player-left', {
+      userId: targetUserId,
+      playerCount,
+    });
+
+    await this.broadcastRoomState(roomCode);
+  }
+
   @SubscribeMessage('room:leave')
   async handleLeave(
     @ConnectedSocket() client: Socket,
@@ -178,25 +203,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    const targetSocketIds = this.userSocketMap.get(payload.targetUserId);
-    if (targetSocketIds) {
-      for (const targetSocketId of targetSocketIds) {
-        const targetSocket = this.server.sockets.get(targetSocketId);
-        if (targetSocket) {
-          targetSocket.emit('room:error', { message: '你已被房主踢出房间' });
-          targetSocket.leave(payload.roomCode);
-        }
-      }
-    }
-
-    // Emit player-left event to all remaining clients in the room
-    const playerCount = await this.roomService.getPlayerCount(payload.roomCode);
-    client.to(payload.roomCode).emit('room:player-left', {
-      userId: payload.targetUserId,
-      playerCount,
-    });
-
-    await this.broadcastRoomState(payload.roomCode);
+    await this.notifyClientsAfterKick(payload.roomCode, payload.targetUserId);
   }
 
   @SubscribeMessage('room:start')

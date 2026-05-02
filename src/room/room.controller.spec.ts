@@ -64,6 +64,7 @@ describe('RoomController', () => {
     const mockGateway = {
       broadcastRoomState: jest.fn(),
       evictUserFromRoom: jest.fn(),
+      notifyClientsAfterKick: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -221,6 +222,27 @@ describe('RoomController', () => {
       roomService.getPlayer.mockResolvedValue(null);
 
       await expect(controller.leaveRoom(mockReq, 'abc123')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('POST /rooms/:code/kick', () => {
+    it('kicks player and notifies socket clients', async () => {
+      roomService.kickPlayer.mockResolvedValue({ success: true });
+
+      const result = await controller.kickPlayer(mockReq, 'abc123', { userId: 'user-2' });
+
+      expect(roomService.kickPlayer).toHaveBeenCalledWith('ABC123', 'user-1', 'user-2');
+      expect(roomGateway.notifyClientsAfterKick).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(result).toEqual({ success: true });
+    });
+
+    it('service error → 400 BadRequestException', async () => {
+      roomService.kickPlayer.mockResolvedValue({ error: '仅房主可以踢人' });
+
+      await expect(
+        controller.kickPlayer(mockReq, 'abc123', { userId: 'user-2' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(roomGateway.notifyClientsAfterKick).not.toHaveBeenCalled();
     });
   });
 });

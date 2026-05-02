@@ -210,19 +210,25 @@ describe('RoomGateway', () => {
   });
 
   describe('handleKick', () => {
-    it('emits player-left and broadcasts room state after kick', async () => {
+    it('emits player-left via server and broadcasts room state after kick', async () => {
       roomService.kickPlayer.mockResolvedValue({ success: true });
       roomService.getPlayerCount.mockResolvedValue(1);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
 
       await gateway.handleKick(mockClient, {
         roomCode: 'ABC123',
         targetUserId: 'user-3',
       });
 
-      expect(mockClient.to).toHaveBeenCalledWith('ABC123');
-      expect(mockClient.emit).toHaveBeenCalledWith('room:player-left', {
+      expect(mockServer.to).toHaveBeenCalledWith('ABC123');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:player-left', {
         userId: 'user-3',
         playerCount: 1,
+      });
+      expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
+        room: mockRoom,
+        players: mockPlayers,
       });
     });
   });

@@ -114,6 +114,7 @@ export class RoomController {
     if ('error' in result) {
       throw new BadRequestException(result.error);
     }
+    await this.roomGateway.notifyClientsAfterKick(code, body.userId);
     return result;
   }
 
