@@ -63,6 +63,7 @@ describe('RoomController', () => {
     };
     const mockGateway = {
       broadcastRoomState: jest.fn(),
+      evictUserFromRoom: jest.fn(),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -204,6 +205,7 @@ describe('RoomController', () => {
       const result = await controller.leaveRoom(mockReq, 'abc123');
 
       expect(roomService.leaveRoom).toHaveBeenCalledWith('ABC123', 'user-1');
+      expect(roomGateway.evictUserFromRoom).toHaveBeenCalledWith('user-1', 'ABC123');
       expect(roomGateway.broadcastRoomState).toHaveBeenCalledWith('ABC123');
       expect(result).toEqual({ success: true });
     });

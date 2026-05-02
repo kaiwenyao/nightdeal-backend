@@ -126,6 +126,21 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  /**
+   * Remove all Socket.IO connections for a user from a room (e.g. HTTP /leave
+   * while WebSocket is still connected). Used by handleLeave and RoomController.
+   */
+  evictUserFromRoom(userId: string, roomCode: string): void {
+    const userSockets = this.userSocketMap.get(userId);
+    if (!userSockets) return;
+    for (const socketId of userSockets) {
+      const socket = this.server.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.leave(roomCode);
+      }
+    }
+  }
+
   @SubscribeMessage('room:leave')
   async handleLeave(
     @ConnectedSocket() client: Socket,
@@ -134,16 +149,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = client.data.userId;
     await this.roomService.leaveRoom(payload.roomCode, userId);
 
-    // Remove ALL sockets for this user from the room (multi-device support)
-    const userSockets = this.userSocketMap.get(userId);
-    if (userSockets) {
-      for (const socketId of userSockets) {
-        const socket = this.server.sockets.sockets.get(socketId);
-        if (socket) {
-          socket.leave(payload.roomCode);
-        }
-      }
-    }
+    this.evictUserFromRoom(userId, payload.roomCode);
 
     // Emit player-left event to all remaining clients in the room
     const playerCount = await this.roomService.getPlayerCount(payload.roomCode);

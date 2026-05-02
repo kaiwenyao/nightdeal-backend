@@ -78,6 +78,7 @@ export class RoomController {
       throw new BadRequestException('你不在该房间中');
     }
     await this.roomService.leaveRoom(code, req.user.id);
+    this.roomGateway.evictUserFromRoom(req.user.id, code);
 
     // Emit player-left event to all remaining clients in the room (consistent with WebSocket leave)
     const playerCount = await this.roomService.getPlayerCount(code);
