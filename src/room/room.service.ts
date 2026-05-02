@@ -400,7 +400,10 @@ export class RoomService {
     }
 
     if (typeof data.roleConfig !== 'undefined') {
-      const parseResult = roleConfigSchema.safeParse(data.roleConfig);
+      // Merge partial roleConfig with current room config so unspecified fields
+      // retain their existing values instead of being reset to Zod defaults.
+      const mergedConfig = { ...room.roleConfig, ...data.roleConfig };
+      const parseResult = roleConfigSchema.safeParse(mergedConfig);
       if (!parseResult.success) {
         const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
         return { error: '角色配置格式无效: ' + errorMessages };

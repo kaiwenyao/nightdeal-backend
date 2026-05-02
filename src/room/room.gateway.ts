@@ -281,6 +281,11 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
               const isOffline = await this.roomService.isPlayerOffline(roomCode, userId);
               if (isOffline) {
                 await this.roomService.leaveRoom(roomCode, userId);
+                const playerCount = await this.roomService.getPlayerCount(roomCode);
+                this.server.to(roomCode).emit('room:player-left', {
+                  userId,
+                  playerCount,
+                });
                 await this.broadcastRoomState(roomCode);
               }
             } catch (error) {

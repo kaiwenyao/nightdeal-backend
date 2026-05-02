@@ -144,6 +144,8 @@ export class RoomController {
       if (err === '仅房主可以修改设置') throw new ForbiddenException(err);
       throw new BadRequestException(err);
     }
+    // Broadcast to WebSocket clients in the room so they see the update immediately
+    await this.roomGateway.broadcastRoomState(code);
     return this.buildRoomDetail(code);
   }
 
