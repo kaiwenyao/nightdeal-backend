@@ -68,11 +68,6 @@ spec:
         }
     }
 
-    options {
-        // 仅保留最近若干次构建记录，避免 Jenkins 磁盘被历史跑满
-        buildDiscarder(logRotator(numToKeepStr: '5', artifactNumToKeepStr: '5'))
-    }
-
     parameters {
         booleanParam(name: 'SONAR_ENABLED', defaultValue: false, description: '是否运行 SonarQube 代码质量分析（需要先安装 sonar-scanner）')
         string(name: 'DOCKER_NETWORK', defaultValue: 'nightdeal_default', description: 'Docker 网络名称（服务器上 PostgreSQL/Redis 所在网络）。可通过 `docker network ls` 查看')
@@ -340,6 +335,15 @@ spec:
 
     post {
         always {
+            // 清理本 Job 在构建机上产生的本地镜像，减轻节点磁盘占用（推送成功后镜像已在 Registry）
+            container('docker') {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        docker rmi "${DOCKER_USER}/nightdeal-backend:build-${BUILD_NUMBER}" || true
+                        docker rmi "${DOCKER_USER}/nightdeal-backend:latest" || true
+                    '''
+                }
+            }
             cleanWs()
         }
         success {
