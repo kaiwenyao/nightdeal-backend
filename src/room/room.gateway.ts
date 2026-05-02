@@ -1,9 +1,9 @@
 import { WebSocketGateway, WebSocketServer, SubscribeMessage, ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
 import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { RoomService } from './room.service';
+import { RoomService, RoomInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
-import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto } from './dto';
+import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto, SettingsUpdateDto } from './dto';
 import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 
@@ -22,7 +22,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   private readonly logger = new Logger(RoomGateway.name);
-  private userSocketMap = new Map<string, string>();
+  private userSocketMap = new Map<string, Set<string>>();
 
   constructor(
     private roomService: RoomService,
@@ -49,7 +49,9 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     client.data.userId = userId;
-    this.userSocketMap.set(userId, client.id);
+    const sockets = this.userSocketMap.get(userId) || new Set();
+    sockets.add(client.id);
+    this.userSocketMap.set(userId, sockets);
   }
 
   @SubscribeMessage('room:join')
@@ -72,19 +74,23 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const existingPlayer = await this.roomService.getPlayer(payload.roomCode, userId);
     if (existingPlayer) {
+      client.join(payload.roomCode);
+
       const isOffline = await this.roomService.isPlayerOffline(payload.roomCode, userId);
       if (isOffline) {
         await this.roomService.markPlayerOnline(payload.roomCode, userId);
-        client.join(payload.roomCode);
-        const players = await this.roomService.getPlayers(payload.roomCode);
-        client.emit('room:state', { room, players });
+        await this.broadcastRoomState(payload.roomCode);
         if (room.status === 'PLAYING' && existingPlayer.role) {
           client.emit('room:started', { yourRole: existingPlayer.role });
         }
-        client.to(payload.roomCode).emit('room:reconnected', { userId });
+        this.server.to(payload.roomCode).emit('room:reconnected', { userId });
         return;
       }
-      client.emit('room:error', { message: '你已在房间中' });
+
+      await this.broadcastRoomState(payload.roomCode);
+      if (room.status === 'PLAYING' && existingPlayer.role) {
+        client.emit('room:started', { yourRole: existingPlayer.role });
+      }
       return;
     }
 
@@ -106,12 +112,33 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
+    this.logger.debug(`New player ${userId} joined room ${payload.roomCode}`);
     client.join(payload.roomCode);
-    client.emit('room:state', result.roomState);
+    await this.broadcastRoomState(payload.roomCode);
+
+    // Emit player-joined event to all OTHER clients in the room for immediate UI update
+    const newPlayer = result.player;
+    const playerCountAfter = await this.roomService.getPlayerCount(payload.roomCode);
+    this.logger.debug(`Emitting room:player-joined for user ${userId} to room ${payload.roomCode}`);
     client.to(payload.roomCode).emit('room:player-joined', {
-      player: result.player,
-      playerCount: result.playerCount,
+      player: newPlayer,
+      playerCount: playerCountAfter,
     });
+  }
+
+  /**
+   * Remove all Socket.IO connections for a user from a room (e.g. HTTP /leave
+   * while WebSocket is still connected). Used by handleLeave and RoomController.
+   */
+  evictUserFromRoom(userId: string, roomCode: string): void {
+    const userSockets = this.userSocketMap.get(userId);
+    if (!userSockets) return;
+    for (const socketId of userSockets) {
+      const socket = this.server.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.leave(roomCode);
+      }
+    }
   }
 
   @SubscribeMessage('room:leave')
@@ -121,11 +148,17 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const userId = client.data.userId;
     await this.roomService.leaveRoom(payload.roomCode, userId);
-    client.leave(payload.roomCode);
+
+    this.evictUserFromRoom(userId, payload.roomCode);
+
+    // Emit player-left event to all remaining clients in the room
+    const playerCount = await this.roomService.getPlayerCount(payload.roomCode);
     client.to(payload.roomCode).emit('room:player-left', {
       userId,
-      playerCount: await this.roomService.getPlayerCount(payload.roomCode),
+      playerCount,
     });
+
+    await this.broadcastRoomState(payload.roomCode);
   }
 
   @SubscribeMessage('room:kick')
@@ -145,19 +178,25 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    const targetSocketId = this.userSocketMap.get(payload.targetUserId);
-    if (targetSocketId) {
-      const targetSocket = this.server.sockets.sockets.get(targetSocketId);
-      if (targetSocket) {
-        targetSocket.emit('room:error', { message: '你已被房主踢出房间' });
-        targetSocket.leave(payload.roomCode);
+    const targetSocketIds = this.userSocketMap.get(payload.targetUserId);
+    if (targetSocketIds) {
+      for (const targetSocketId of targetSocketIds) {
+        const targetSocket = this.server.sockets.sockets.get(targetSocketId);
+        if (targetSocket) {
+          targetSocket.emit('room:error', { message: '你已被房主踢出房间' });
+          targetSocket.leave(payload.roomCode);
+        }
       }
     }
 
+    // Emit player-left event to all remaining clients in the room
+    const playerCount = await this.roomService.getPlayerCount(payload.roomCode);
     client.to(payload.roomCode).emit('room:player-left', {
       userId: payload.targetUserId,
-      playerCount: await this.roomService.getPlayerCount(payload.roomCode),
+      playerCount,
     });
+
+    await this.broadcastRoomState(payload.roomCode);
   }
 
   @SubscribeMessage('room:start')
@@ -174,12 +213,38 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     for (const assignment of result.assignments) {
-      const socketId = this.userSocketMap.get(assignment.userId);
-      if (socketId) {
-        const target = this.server.sockets.sockets.get(socketId);
-        target?.emit('room:started', { yourRole: assignment.role });
+      const socketIds = this.userSocketMap.get(assignment.userId);
+      if (socketIds) {
+        for (const socketId of socketIds) {
+          const target = this.server.sockets.sockets.get(socketId);
+          target?.emit('room:started', { yourRole: assignment.role });
+        }
       }
     }
+  }
+
+  @SubscribeMessage('room:settings-update')
+  async handleSettingsUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: SettingsUpdateDto,
+  ) {
+    const userId = client.data.userId;
+    const result = await this.roomService.updateRoomSettings(payload.roomCode, userId, {
+      maxPlayers: payload.maxPlayers,
+      roleConfig: payload.roleConfig,
+    });
+
+    if (typeof result === 'object' && 'error' in result) {
+      client.emit('room:error', { message: (result as { error: string }).error });
+      return;
+    }
+
+    // Broadcast to all room members including sender
+    const maxPlayers = (result as RoomInfo).maxPlayers;
+    const roleConfig = (result as RoomInfo).roleConfig;
+    client.to(payload.roomCode).emit('room:settings-updated', { maxPlayers, roleConfig });
+    client.emit('room:settings-updated', { maxPlayers, roleConfig });
+    await this.broadcastRoomState(payload.roomCode);
   }
 
   @SubscribeMessage('player:update')
@@ -204,28 +269,50 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = client.data.userId;
     if (!userId) return;
 
-    this.userSocketMap.delete(userId);
+    const sockets = this.userSocketMap.get(userId);
+    if (sockets) {
+      sockets.delete(client.id);
+      if (sockets.size === 0) {
+        this.userSocketMap.delete(userId);
 
-    const rooms = await this.roomService.getUserRooms(userId);
+        // Only mark offline and schedule cleanup when ALL devices are disconnected
+        const rooms = await this.roomService.getUserRooms(userId);
 
-    for (const roomCode of rooms) {
-      await this.roomService.markPlayerOffline(roomCode, userId);
-      client.to(roomCode).emit('room:offline', { userId });
+        for (const roomCode of rooms) {
+          await this.roomService.markPlayerOffline(roomCode, userId);
+          client.to(roomCode).emit('room:offline', { userId });
 
-      setTimeout(async () => {
-        try {
-          const isOffline = await this.roomService.isPlayerOffline(roomCode, userId);
-          if (isOffline) {
-            await this.roomService.leaveRoom(roomCode, userId);
-            this.server.to(roomCode).emit('room:player-left', {
-              userId,
-              playerCount: await this.roomService.getPlayerCount(roomCode),
-            });
-          }
-        } catch (error) {
-          this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
+          setTimeout(async () => {
+            try {
+              const isOffline = await this.roomService.isPlayerOffline(roomCode, userId);
+              if (isOffline) {
+                await this.roomService.leaveRoom(roomCode, userId);
+                const playerCount = await this.roomService.getPlayerCount(roomCode);
+                this.server.to(roomCode).emit('room:player-left', {
+                  userId,
+                  playerCount,
+                });
+                await this.broadcastRoomState(roomCode);
+              }
+            } catch (error) {
+              this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
+            }
+          }, OFFLINE_TIMEOUT_MS);
         }
-      }, OFFLINE_TIMEOUT_MS);
+      }
     }
+  }
+
+  async broadcastRoomState(roomCode: string): Promise<void> {
+    const room = await this.roomService.getRoom(roomCode);
+    if (!room) {
+      this.logger.warn(`Cannot broadcast room state: room ${roomCode} not found`);
+      return;
+    }
+    const players = await this.roomService.getPlayers(roomCode);
+    const roomSockets = this.server.sockets.adapter.rooms.get(roomCode);
+    const socketCount = roomSockets ? roomSockets.size : 0;
+    this.logger.debug(`Broadcasting room:state to ${socketCount} clients in room ${roomCode}`);
+    this.server.to(roomCode).emit('room:state', { room, players });
   }
 }

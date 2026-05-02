@@ -2,10 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { RoleConfig, roleConfigSchema } from './role-config.schema';
+import { RoleConfig, roleConfigSchema, getDefaultConfig, PartialRoleConfig } from './role-config.schema';
 import { assignRoles, RoleAssignment } from './role-assigner';
 import { assignSeat } from './seat-assigner';
-import { nanoid } from 'nanoid';
+import { customAlphabet } from 'nanoid';
+
+const generateRoomCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6);
 
 export interface RoomInfo {
   id: string;
@@ -123,23 +125,52 @@ export class RoomService {
     };
   }
 
-  async createRoom(hostId: string, roleConfig?: RoleConfig, maxPlayers?: number): Promise<RoomInfo> {
-    const config = roleConfigSchema.parse(roleConfig || {});
+  async createRoom(hostId: string, roleConfig?: PartialRoleConfig, maxPlayers?: number): Promise<RoomInfo | { error: string }> {
+    const resolvedMaxPlayers = maxPlayers || 5;
+    // Use default config when roleConfig is not provided OR is an empty object
+    const resolvedRoleConfig = (roleConfig && Object.keys(roleConfig).length > 0)
+      ? roleConfig
+      : getDefaultConfig(resolvedMaxPlayers);
+    const parseResult = roleConfigSchema.safeParse(resolvedRoleConfig);
+    if (!parseResult.success) {
+      const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+      return { error: '角色配置格式无效: ' + errorMessages };
+    }
+    const config = parseResult.data;
+    const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+      + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+      + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+      + config.loyalServants + config.minions;
+    if (totalRoles !== resolvedMaxPlayers) {
+      return { error: `角色总数(${totalRoles})与房间人数(${resolvedMaxPlayers})不匹配` };
+    }
     const code = await this.generateUniqueCode();
 
-    const room = await this.prisma.room.create({
-      data: {
-        code,
-        hostId,
-        roleConfig: config,
-        maxPlayers: maxPlayers || 10,
-      },
+    const room = await this.prisma.$transaction(async (tx: any) => {
+      const createdRoom = await tx.room.create({
+        data: {
+          code,
+          hostId,
+          roleConfig: config,
+          maxPlayers: resolvedMaxPlayers,
+        },
+      });
+
+      await tx.roomPlayer.create({
+        data: {
+          roomId: createdRoom.id,
+          userId: hostId,
+          seatNo: 1,
+        },
+      });
+
+      return createdRoom;
     });
 
     await this.redis.hset(`room:${code}`, 'status', 'WAITING');
     await this.redis.hset(`room:${code}`, 'hostId', hostId);
-    await this.redis.hset(`room:${code}`, 'playerCount', '0');
-    await this.redis.hset(`room:${code}`, 'maxPlayers', String(maxPlayers || 10));
+    await this.redis.hset(`room:${code}`, 'playerCount', '1');
+    await this.redis.hset(`room:${code}`, 'maxPlayers', String(resolvedMaxPlayers));
 
     return {
       ...room,
@@ -193,11 +224,29 @@ export class RoomService {
     const room = await this.getRoom(roomCode);
     if (!room) return;
 
+    // If the host is leaving, transfer host to the player with the smallest seatNo
+    if (room.hostId === userId) {
+      const remainingPlayers = await this.prisma.roomPlayer.findMany({
+        where: { roomId: room.id, userId: { not: userId } },
+        orderBy: { seatNo: 'asc' },
+        take: 1,
+      });
+      if (remainingPlayers.length > 0) {
+        const newHostId = remainingPlayers[0].userId;
+        await this.prisma.room.update({
+          where: { id: room.id },
+          data: { hostId: newHostId },
+        });
+        await this.redis.hset(`room:${roomCode}`, 'hostId', newHostId);
+      }
+    }
+
     await this.prisma.roomPlayer.deleteMany({
       where: { roomId: room.id, userId },
     });
 
     const playerCount = await this.getPlayerCount(roomCode);
+    await this.redis.del(`room:${roomCode}:offline:${userId}`);
     await this.redis.hset(`room:${roomCode}`, 'playerCount', String(playerCount));
   }
 
@@ -211,6 +260,7 @@ export class RoomService {
     });
 
     const playerCount = await this.getPlayerCount(roomCode);
+    await this.redis.del(`room:${roomCode}:offline:${targetUserId}`);
     await this.redis.hset(`room:${roomCode}`, 'playerCount', String(playerCount));
     return { success: true };
   }
@@ -224,7 +274,12 @@ export class RoomService {
     const players = await this.getPlayers(roomCode);
     if (players.length < 5) return { error: '至少需要 5 名玩家' };
 
-    const config = roleConfigSchema.parse(room.roleConfig);
+    const parseResult = roleConfigSchema.safeParse(room.roleConfig);
+    if (!parseResult.success) {
+      const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+      return { error: '角色配置格式无效: ' + errorMessages };
+    }
+    const config = parseResult.data;
     const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
       + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
       + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
@@ -302,6 +357,89 @@ export class RoomService {
     });
   }
 
+  async updateRoomSettings(
+    roomCode: string,
+    hostId: string,
+    data: { maxPlayers?: number; roleConfig?: PartialRoleConfig },
+  ): Promise<RoomInfo | { error: string }> {
+    const room = await this.getRoom(roomCode);
+    if (!room) {
+      return { error: '房间不存在' };
+    }
+    if (room.hostId !== hostId) {
+      return { error: '仅房主可以修改设置' };
+    }
+    if (room.status !== 'WAITING') {
+      return { error: '游戏已开始，无法修改设置' };
+    }
+
+    const updates: Partial<{ maxPlayers: number; roleConfig: RoleConfig }> = {};
+
+    if (typeof data.maxPlayers !== 'undefined') {
+      const playerCount = await this.getPlayerCount(roomCode);
+      if (data.maxPlayers < playerCount) {
+        return {
+          error: `当前已有${playerCount}名玩家，无法减少至${data.maxPlayers}人`,
+        };
+      }
+      updates.maxPlayers = data.maxPlayers;
+
+      // If maxPlayers changes without an explicit roleConfig, auto-replace with
+      // the default config for the new player count to prevent mismatches at game start
+      if (typeof data.roleConfig === 'undefined') {
+        const newConfig = getDefaultConfig(data.maxPlayers);
+        const totalRoles = (newConfig.merlin ? 1 : 0) + (newConfig.percival ? 1 : 0)
+          + (newConfig.mordred ? 1 : 0) + (newConfig.morgana ? 1 : 0)
+          + (newConfig.oberon ? 1 : 0) + (newConfig.assassin ? 1 : 0)
+          + newConfig.loyalServants + newConfig.minions;
+        if (totalRoles !== data.maxPlayers) {
+          return { error: `默认角色总数(${totalRoles})与房间人数(${data.maxPlayers})不匹配` };
+        }
+        updates.roleConfig = newConfig;
+      }
+    }
+
+    if (typeof data.roleConfig !== 'undefined') {
+      // Merge partial roleConfig with current room config so unspecified fields
+      // retain their existing values instead of being reset to Zod defaults.
+      const mergedConfig = { ...room.roleConfig, ...data.roleConfig };
+      const parseResult = roleConfigSchema.safeParse(mergedConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: '角色配置格式无效: ' + errorMessages };
+      }
+      const config = parseResult.data;
+      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+        + config.loyalServants + config.minions;
+      const targetMax = updates.maxPlayers ?? room.maxPlayers;
+      if (totalRoles !== targetMax) {
+        return { error: `角色总数(${totalRoles})与房间人数(${targetMax})不匹配` };
+      }
+      updates.roleConfig = config;
+    }
+
+    // If nothing to update, return current room info
+    if (updates.maxPlayers === undefined && updates.roleConfig === undefined) {
+      const current = await this.getRoom(roomCode);
+      return current as RoomInfo;
+    }
+
+    const updated = await this.prisma.room.update({
+      where: { id: room.id },
+      data: updates,
+    });
+
+    if (typeof updates.maxPlayers !== 'undefined') {
+      await this.redis.hset(`room:${roomCode}`, 'maxPlayers', String(updates.maxPlayers));
+    }
+
+    // Return refreshed room info
+    const refreshed = await this.getRoom(roomCode);
+    return refreshed as RoomInfo;
+  }
+
   @Cron('*/5 * * * *')
   async cleanupOfflinePlayers(): Promise<void> {
     this.logger.log('Running offline player cleanup...');
@@ -343,7 +481,7 @@ export class RoomService {
 
   private async generateUniqueCode(): Promise<string> {
     for (let attempt = 0; attempt < 5; attempt++) {
-      const code = nanoid(6).toUpperCase();
+      const code = generateRoomCode();
       const existing = await this.prisma.room.findUnique({
         where: { code },
       });
