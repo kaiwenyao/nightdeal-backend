@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
+import { Namespace, Socket } from 'socket.io';
 import { RoomGateway } from './room.gateway';
 import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
@@ -9,7 +9,7 @@ describe('RoomGateway', () => {
   let gateway: RoomGateway;
   let roomService: jest.Mocked<RoomService>;
   let authService: jest.Mocked<AuthService>;
-  let mockServer: jest.Mocked<Server>;
+  let mockServer: jest.Mocked<Namespace>;
   let mockClient: jest.Mocked<Socket>;
 
   const mockRoom: RoomInfo = {
@@ -47,12 +47,10 @@ describe('RoomGateway', () => {
     mockServer = {
       to: jest.fn().mockReturnThis() as any,
       emit: jest.fn(),
-      sockets: {
-        adapter: {
-          rooms: new Map([['ABC123', new Set(['socket-1', 'socket-2'])]]),
-        },
-        sockets: new Map(),
+      adapter: {
+        rooms: new Map([['ABC123', new Set(['socket-1', 'socket-2'])]]),
       },
+      sockets: new Map(),
     } as any;
 
     mockClient = {

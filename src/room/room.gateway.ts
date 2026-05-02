@@ -1,6 +1,6 @@
 import { WebSocketGateway, WebSocketServer, SubscribeMessage, ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
 import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
+import { Namespace, Socket } from 'socket.io';
 import { RoomService, RoomInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
 import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto, SettingsUpdateDto } from './dto';
@@ -19,7 +19,7 @@ const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server: Namespace;
 
   private readonly logger = new Logger(RoomGateway.name);
   private userSocketMap = new Map<string, Set<string>>();
@@ -134,7 +134,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userSockets = this.userSocketMap.get(userId);
     if (!userSockets) return;
     for (const socketId of userSockets) {
-      const socket = this.server.sockets.sockets.get(socketId);
+      const socket = this.server.sockets.get(socketId);
       if (socket) {
         socket.leave(roomCode);
       }
@@ -181,7 +181,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const targetSocketIds = this.userSocketMap.get(payload.targetUserId);
     if (targetSocketIds) {
       for (const targetSocketId of targetSocketIds) {
-        const targetSocket = this.server.sockets.sockets.get(targetSocketId);
+        const targetSocket = this.server.sockets.get(targetSocketId);
         if (targetSocket) {
           targetSocket.emit('room:error', { message: '你已被房主踢出房间' });
           targetSocket.leave(payload.roomCode);
@@ -216,7 +216,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const socketIds = this.userSocketMap.get(assignment.userId);
       if (socketIds) {
         for (const socketId of socketIds) {
-          const target = this.server.sockets.sockets.get(socketId);
+          const target = this.server.sockets.get(socketId);
           target?.emit('room:started', { yourRole: assignment.role });
         }
       }
@@ -310,7 +310,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     const players = await this.roomService.getPlayers(roomCode);
-    const roomSockets = this.server.sockets.adapter.rooms.get(roomCode);
+    const roomSockets = this.server.adapter.rooms?.get(roomCode);
     const socketCount = roomSockets ? roomSockets.size : 0;
     this.logger.debug(`Broadcasting room:state to ${socketCount} clients in room ${roomCode}`);
     this.server.to(roomCode).emit('room:state', { room, players });
