@@ -10,27 +10,36 @@ import {
   ForbiddenException,
   BadRequestException,
   Patch,
+  Put,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { RoomService } from './room.service';
+import { RoomGateway } from './room.gateway';
 import { CreateRoomDto, KickRoomBodyDto, UpdateRoomSettingsDto } from './dto';
 import { AuthGuard } from '../auth/auth.guard';
 
 @ApiTags('rooms')
 @Controller('rooms')
 export class RoomController {
-  constructor(private roomService: RoomService) {}
+  constructor(
+    private roomService: RoomService,
+    private roomGateway: RoomGateway,
+  ) {}
 
   @Post()
   @ApiBearerAuth()
   @ApiOperation({ summary: '创建房间', description: '创建一个新的游戏房间' })
   @UseGuards(AuthGuard)
   async createRoom(@Request() req: any, @Body() dto: CreateRoomDto) {
-    const room = await this.roomService.createRoom(
+    const result = await this.roomService.createRoom(
       req.user.id,
-      dto.roleConfig as any,
+      dto.roleConfig,
       dto.maxPlayers,
     );
+    if ('error' in result) {
+      throw new BadRequestException(result.error);
+    }
+    const room = result;
     return {
       id: room.id,
       code: room.code,
@@ -52,6 +61,33 @@ export class RoomController {
       throw new BadRequestException(result.error);
     }
     return this.buildRoomDetail(code);
+  }
+
+  @Post(':code/leave')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '离开房间', description: '当前用户离开指定房间' })
+  @UseGuards(AuthGuard)
+  async leaveRoom(@Request() req: any, @Param('code') raw: string) {
+    const code = raw.toUpperCase();
+    const room = await this.roomService.getRoom(code);
+    if (!room) {
+      throw new NotFoundException('房间不存在');
+    }
+    const player = await this.roomService.getPlayer(code, req.user.id);
+    if (!player) {
+      throw new BadRequestException('你不在该房间中');
+    }
+    await this.roomService.leaveRoom(code, req.user.id);
+
+    // Emit player-left event to all remaining clients in the room (consistent with WebSocket leave)
+    const playerCount = await this.roomService.getPlayerCount(code);
+    this.roomGateway.server.to(code).emit('room:player-left', {
+      userId: req.user.id,
+      playerCount,
+    });
+
+    await this.roomGateway.broadcastRoomState(code);
+    return { success: true };
   }
 
   @Post(':code/start')
@@ -85,13 +121,25 @@ export class RoomController {
   @ApiOperation({ summary: '更新房间设置', description: '房主更新房间人数和角色配置' })
   @UseGuards(AuthGuard)
   async updateRoomSettings(@Request() req: any, @Param('code') raw: string, @Body() dto: UpdateRoomSettingsDto) {
+    return this.applyRoomSettingsUpdate(req, raw, dto);
+  }
+
+  @Put(':code/settings')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '更新房间设置', description: '房主更新房间人数和角色配置' })
+  @UseGuards(AuthGuard)
+  async putRoomSettings(@Request() req: any, @Param('code') raw: string, @Body() dto: UpdateRoomSettingsDto) {
+    return this.applyRoomSettingsUpdate(req, raw, dto);
+  }
+
+  private async applyRoomSettingsUpdate(req: any, raw: string, dto: UpdateRoomSettingsDto) {
     const code = raw.toUpperCase();
     const result = await this.roomService.updateRoomSettings(code, req.user.id, {
       maxPlayers: dto.maxPlayers,
-      roleConfig: dto.roleConfig as any,
+      roleConfig: dto.roleConfig,
     });
     if ('error' in result) {
-      const err = (result as any).error;
+      const err = (result as { error: string }).error;
       if (err === '房间不存在') throw new NotFoundException(err);
       if (err === '仅房主可以修改设置') throw new ForbiddenException(err);
       throw new BadRequestException(err);

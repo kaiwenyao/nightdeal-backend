@@ -1,4 +1,5 @@
 import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsBoolean } from 'class-validator';
+import { PartialRoleConfig } from '../role-config.schema';
 
 export class JoinRoomDto {
   @IsString()
@@ -35,16 +36,7 @@ export class KickRoomBodyDto {
 
 export class CreateRoomDto {
   @IsOptional()
-  roleConfig?: {
-    merlin?: boolean;
-    percival?: boolean;
-    mordred?: boolean;
-    morgana?: boolean;
-    oberon?: boolean;
-    assassin?: boolean;
-    loyalServants?: number;
-    minions?: number;
-  };
+  roleConfig?: PartialRoleConfig;
 
   @IsOptional()
   @IsNumber()
@@ -73,17 +65,7 @@ export class UpdateRoomSettingsDto {
   maxPlayers?: number;
 
   @IsOptional()
-  // Reuse the same shape as CreateRoomDto for role configuration
-  roleConfig?: {
-    merlin?: boolean;
-    percival?: boolean;
-    mordred?: boolean;
-    morgana?: boolean;
-    oberon?: boolean;
-    assassin?: boolean;
-    loyalServants?: number;
-    minions?: number;
-  };
+  roleConfig?: PartialRoleConfig;
 }
 
 // WebSocket payload for updating room settings
@@ -100,14 +82,5 @@ export class SettingsUpdateDto {
   maxPlayers?: number;
 
   @IsOptional()
-  roleConfig?: {
-    merlin?: boolean;
-    percival?: boolean;
-    mordred?: boolean;
-    morgana?: boolean;
-    oberon?: boolean;
-    assassin?: boolean;
-    loyalServants?: number;
-    minions?: number;
-  };
+  roleConfig?: PartialRoleConfig;
 }
