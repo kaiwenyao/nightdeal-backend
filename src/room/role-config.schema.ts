@@ -24,13 +24,14 @@ export type RoleConfig = z.infer<typeof roleConfigSchema>;
  */
 export type PartialRoleConfig = Partial<RoleConfig>;
 
+/** 标准局预设；7 人默认奥伯伦（也可用 settings 关奥伯伦、minions:1 换成普通爪牙）。 */
 export const DEFAULT_ROLE_CONFIGS: Record<number, RoleConfig> = {
-  5: { merlin: true, percival: false, mordred: false, morgana: false, oberon: false, assassin: true, loyalServants: 2, minions: 1 },
-  6: { merlin: true, percival: false, mordred: false, morgana: false, oberon: false, assassin: true, loyalServants: 3, minions: 1 },
-  7: { merlin: true, percival: true, mordred: false, morgana: false, oberon: false, assassin: true, loyalServants: 3, minions: 1 },
-  8: { merlin: true, percival: true, mordred: true, morgana: false, oberon: false, assassin: true, loyalServants: 3, minions: 1 },
-  9: { merlin: true, percival: true, mordred: true, morgana: true, oberon: false, assassin: true, loyalServants: 3, minions: 1 },
-  10: { merlin: true, percival: true, mordred: true, morgana: true, oberon: true, assassin: true, loyalServants: 3, minions: 1 },
+  5: { merlin: true, percival: true, mordred: false, morgana: true, oberon: false, assassin: true, loyalServants: 1, minions: 0 },
+  6: { merlin: true, percival: true, mordred: false, morgana: true, oberon: false, assassin: true, loyalServants: 2, minions: 0 },
+  7: { merlin: true, percival: true, mordred: false, morgana: true, oberon: true, assassin: true, loyalServants: 2, minions: 0 },
+  8: { merlin: true, percival: true, mordred: false, morgana: true, oberon: false, assassin: true, loyalServants: 3, minions: 1 },
+  9: { merlin: true, percival: true, mordred: true, morgana: true, oberon: false, assassin: true, loyalServants: 4, minions: 0 },
+  10: { merlin: true, percival: true, mordred: true, morgana: true, oberon: true, assassin: true, loyalServants: 4, minions: 0 },
 };
 
 export function getDefaultConfig(playerCount: number): RoleConfig {
