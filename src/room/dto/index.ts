@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsBoolean } from 'class-validator';
 import { PartialRoleConfig } from '../role-config.schema';
 
@@ -39,6 +40,7 @@ export class CreateRoomDto {
   roleConfig?: PartialRoleConfig;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(5)
   @Max(10)
@@ -59,6 +61,7 @@ export class UpdatePlayerDto {
 // DTO for updating room settings via HTTP PATCH
 export class UpdateRoomSettingsDto {
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(5)
   @Max(10)
@@ -76,6 +79,7 @@ export class SettingsUpdateDto {
   roomCode: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(5)
   @Max(10)
