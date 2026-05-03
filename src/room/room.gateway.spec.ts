@@ -267,6 +267,7 @@ describe('RoomGateway', () => {
       });
 
       expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
         message: '角色配置格式无效',
       });
     });
@@ -305,6 +306,7 @@ describe('RoomGateway', () => {
       await gateway.handleRestart(mockClient, { roomCode: 'ABC123' });
 
       expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
         message: '游戏尚未开始',
       });
       expect(mockServer.emit).not.toHaveBeenCalled();

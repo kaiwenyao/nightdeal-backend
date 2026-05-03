@@ -145,7 +145,7 @@ export class RoomService {
     maxPlayers?: number,
     gameType: GameType = GameType.AVALON,
   ): Promise<RoomInfo | { error: string }> {
-    const resolvedMaxPlayers = maxPlayers || 5;
+    const resolvedMaxPlayers = maxPlayers || (gameType === GameType.SGS ? 2 : 5);
     const isSgs = gameType === GameType.SGS;
 
     let config: RoleConfig | SgsRoleConfig;
@@ -319,7 +319,10 @@ export class RoomService {
     if (room.status !== 'WAITING') return { error: '游戏已开始' };
 
     const players = await this.getPlayers(roomCode);
-    if (players.length < 5) return { error: '至少需要 5 名玩家' };
+    const minPlayers = room.gameType === GameType.SGS ? 2 : 5;
+    if (players.length < minPlayers) {
+      return { error: `至少需要 ${minPlayers} 名玩家` };
+    }
 
     const assignmentResult = this.computeRoleAssignments(room, players);
     if ('error' in assignmentResult) return assignmentResult;
@@ -355,7 +358,10 @@ export class RoomService {
     if (room.status !== 'PLAYING') return { error: '游戏尚未开始' };
 
     const players = await this.getPlayers(roomCode);
-    if (players.length < 5) return { error: '至少需要 5 名玩家' };
+    const minPlayers = room.gameType === GameType.SGS ? 2 : 5;
+    if (players.length < minPlayers) {
+      return { error: `至少需要 ${minPlayers} 名玩家` };
+    }
 
     const assignmentResult = this.computeRoleAssignments(room, players);
     if ('error' in assignmentResult) return assignmentResult;

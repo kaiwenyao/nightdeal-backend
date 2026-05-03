@@ -2,6 +2,18 @@ import { assignSgsRoles, getSgsDefaultConfig, SGS_DEFAULT_CONFIGS } from './sgs-
 
 describe('SgsRoleAssigner', () => {
   describe('getSgsDefaultConfig', () => {
+    it('should return correct config for 2 players', () => {
+      expect(getSgsDefaultConfig(2)).toEqual({ monarch: 1, loyalist: 0, rebel: 1, traitor: 0 });
+    });
+
+    it('should return correct config for 3 players', () => {
+      expect(getSgsDefaultConfig(3)).toEqual({ monarch: 1, loyalist: 2, rebel: 0, traitor: 0 });
+    });
+
+    it('should return correct config for 4 players', () => {
+      expect(getSgsDefaultConfig(4)).toEqual({ monarch: 1, loyalist: 1, rebel: 2, traitor: 0 });
+    });
+
     it('should return correct config for 5 players', () => {
       expect(getSgsDefaultConfig(5)).toEqual({ monarch: 1, loyalist: 1, rebel: 2, traitor: 1 });
     });
@@ -15,7 +27,7 @@ describe('SgsRoleAssigner', () => {
     });
 
     it('should fallback to 5-player config for unsupported counts', () => {
-      expect(getSgsDefaultConfig(3)).toEqual(SGS_DEFAULT_CONFIGS[5]);
+      expect(getSgsDefaultConfig(1)).toEqual(SGS_DEFAULT_CONFIGS[5]);
       expect(getSgsDefaultConfig(11)).toEqual(SGS_DEFAULT_CONFIGS[5]);
     });
   });
@@ -26,6 +38,49 @@ describe('SgsRoleAssigner', () => {
       const config = { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 };
 
       expect(() => assignSgsRoles(players, config)).toThrow('角色总数(5)与玩家数量(1)不匹配');
+    });
+
+    it('should assign roles correctly for 2 players', () => {
+      const players = [
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 2, userId: 'user2' },
+      ];
+
+      const result = assignSgsRoles(players);
+
+      expect(result).toHaveLength(2);
+      expect(result.filter(r => r.role === '主公')).toHaveLength(1);
+      expect(result.filter(r => r.role === '反贼')).toHaveLength(1);
+    });
+
+    it('should assign roles correctly for 3 players', () => {
+      const players = [
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 2, userId: 'user2' },
+        { seatNo: 3, userId: 'user3' },
+      ];
+
+      const result = assignSgsRoles(players);
+
+      expect(result).toHaveLength(3);
+      expect(result.filter(r => r.role === '主公')).toHaveLength(1);
+      expect(result.filter(r => r.role === '忠臣')).toHaveLength(2);
+    });
+
+    it('should assign roles correctly for 4 players', () => {
+      const players = [
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 2, userId: 'user2' },
+        { seatNo: 3, userId: 'user3' },
+        { seatNo: 4, userId: 'user4' },
+      ];
+
+      const result = assignSgsRoles(players);
+
+      expect(result).toHaveLength(4);
+      expect(result.filter(r => r.role === '主公')).toHaveLength(1);
+      expect(result.filter(r => r.role === '忠臣')).toHaveLength(1);
+      expect(result.filter(r => r.role === '反贼')).toHaveLength(2);
     });
 
     it('should assign roles correctly for 5 players', () => {

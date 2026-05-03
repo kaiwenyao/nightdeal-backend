@@ -6,6 +6,7 @@ import { AuthService } from '../auth/auth.service';
 import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto, SettingsUpdateDto } from './dto';
 import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
+import { WsErrorCode } from '../common/constants/ws-error-codes';
 
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -38,13 +39,13 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       (typeof queryToken === 'string' && queryToken.trim()) ||
       undefined;
     if (!token) {
-      client.emit('room:error', { message: '未登录' });
+      client.emit('room:error', { code: WsErrorCode.UNAUTHORIZED, message: '未登录' });
       client.disconnect();
       return;
     }
     const userId = await this.authService.verifyToken(token);
     if (!userId) {
-      client.emit('room:error', { message: '登录态失效' });
+      client.emit('room:error', { code: WsErrorCode.TOKEN_EXPIRED, message: '登录态失效' });
       client.disconnect();
       return;
     }
@@ -63,12 +64,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const room = await this.roomService.getRoom(payload.roomCode);
     if (!room) {
-      client.emit('room:error', { message: '房间不存在' });
+      client.emit('room:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '房间不存在' });
       return;
     }
 
     if (room.status === 'FINISHED') {
-      client.emit('room:error', { message: '房间已结束' });
+      client.emit('room:error', { code: WsErrorCode.ROOM_FINISHED, message: '房间已结束' });
       return;
     }
 
@@ -95,20 +96,20 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     if (room.status === 'PLAYING') {
-      client.emit('room:error', { message: '游戏已开始，无法加入' });
+      client.emit('room:error', { code: WsErrorCode.GAME_ALREADY_STARTED, message: '游戏已开始，无法加入' });
       return;
     }
 
     const playerCount = await this.roomService.getPlayerCount(payload.roomCode);
     if (playerCount >= room.maxPlayers) {
-      client.emit('room:error', { message: '房间已满' });
+      client.emit('room:error', { code: WsErrorCode.ROOM_FULL, message: '房间已满' });
       return;
     }
 
     const result = await this.roomService.joinRoom(payload.roomCode, userId);
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -195,7 +196,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       for (const targetSocketId of targetSocketIds) {
         const targetSocket = this.server.sockets.get(targetSocketId);
         if (targetSocket) {
-          targetSocket.emit('room:error', { message: '你已被房主踢出房间' });
+          targetSocket.emit('room:error', {
+            code: WsErrorCode.KICKED,
+            message: '你已被房主踢出房间',
+          });
           targetSocket.leave(roomCode);
         }
       }
@@ -243,7 +247,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     );
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -259,7 +263,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const result = await this.roomService.startGame(payload.roomCode, userId);
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -275,7 +279,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const result = await this.roomService.restartGame(payload.roomCode, userId);
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -294,7 +298,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     if (typeof result === 'object' && 'error' in result) {
-      client.emit('room:error', { message: (result as { error: string }).error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: (result as { error: string }).error });
       return;
     }
 
