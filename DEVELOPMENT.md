@@ -341,7 +341,7 @@ export class AuthService {
 - `session_key` 存入 Redis 时应加密（使用 AES-256），避免 Redis 被攻破后泄露
 - 自定义 token 使用 JWT + Redis 双重校验（JWT 验签 + Redis session 存在性检查）
 - 敏感接口需校验用户身份与房间关系
-- 房间码使用 `nanoid` 生成，6 位字母数字，创建时做唯一性检查，冲突则重新生成（最多重试 5 次）
+- 房间码使用 `nanoid` 生成，6 位大写英文字母（A–Z），创建时做唯一性检查，冲突则重新生成（最多重试 5 次）
 
 ---
 
@@ -769,35 +769,17 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 #### 4.3.5 WebSocket DTO（消息校验）
 
 ```typescript
-// src/room/dto/index.ts
+// src/room/dto/index.ts — 含 roomCode 的 WS DTO（Join / Leave / Start / Kick / SettingsUpdate）
+// 均在 roomCode 上使用：@Transform 转大写 + @IsString + @Length(6,6) + @Matches(/^[A-Z]{6}$/)
+import { Transform } from 'class-transformer';
 import { IsString, Length, Matches } from 'class-validator';
 
 export class JoinRoomDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsString()
   @Length(6, 6)
-  @Matches(/^[A-Za-z0-9]{6}$/, { message: '房间码格式无效' })
+  @Matches(/^[A-Z]{6}$/, { message: '房间码格式无效' })
   roomCode: string;
-}
-
-export class LeaveRoomDto {
-  @IsString()
-  @Length(6, 6)
-  roomCode: string;
-}
-
-export class StartGameDto {
-  @IsString()
-  @Length(6, 6)
-  roomCode: string;
-}
-
-export class KickPlayerDto {
-  @IsString()
-  @Length(6, 6)
-  roomCode: string;
-
-  @IsString()
-  targetUserId: string;
 }
 ```
 
@@ -1258,7 +1240,7 @@ volumes:
 
 - `session_key` 禁止下发到客户端，存入 Redis 时应加密（AES-256）
 - 角色分配后仅通过单播推送给对应玩家，不广播
-- 房间码使用 `nanoid` 生成（密码学安全），创建时做唯一性重试（最多 5 次）
+- 房间码使用 `nanoid` 生成（密码学安全），字符集为 A–Z，长度 6，创建时做唯一性重试（最多 5 次）
 - WebSocket 连接必须携带有效 JWT（通过 `WsAuthGuard` 校验）
 - 敏感操作（开始游戏、踢人）校验房主身份
 - 登录接口限频：10 次/分钟/IP（`@nestjs/throttler`）
@@ -2442,7 +2424,7 @@ Authorization: Bearer <token>
   "message": "success",
   "data": {
     "id": "clx1234567890",
-    "code": "ABC123",
+    "code": "ABCDEF",
     "status": "WAITING",
     "roleConfig": { ... },
     "maxPlayers": 10,
@@ -2484,7 +2466,7 @@ Authorization: Bearer <token>
   "message": "success",
   "data": {
     "id": "clx1234567890",
-    "code": "ABC123",
+    "code": "ABCDEF",
     "status": "WAITING",
     "roleConfig": { ... },
     "maxPlayers": 10,
@@ -2594,7 +2576,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "roomCode": "ABC123"
+  "roomCode": "ABCDEF"
 }
 ```
 
@@ -2604,7 +2586,7 @@ Authorization: Bearer <token>
 {
   "room": {
     "id": "clx1234567890",
-    "code": "ABC123",
+    "code": "ABCDEF",
     "status": "WAITING",
     "players": [ ... ]
   }

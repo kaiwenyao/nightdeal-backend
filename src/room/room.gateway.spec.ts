@@ -15,7 +15,7 @@ describe('RoomGateway', () => {
 
   const mockRoom: RoomInfo = {
     id: 'room-1',
-    code: 'ABC123',
+    code: 'ABCDEF',
     hostId: 'user-1',
     status: 'WAITING',
     gameType: GameType.AVALON,
@@ -50,7 +50,7 @@ describe('RoomGateway', () => {
       to: jest.fn().mockReturnThis() as any,
       emit: jest.fn(),
       adapter: {
-        rooms: new Map([['ABC123', new Set(['socket-1', 'socket-2'])]]),
+        rooms: new Map([['ABCDEF', new Set(['socket-1', 'socket-2'])]]),
       },
       sockets: new Map(),
     } as any;
@@ -111,9 +111,9 @@ describe('RoomGateway', () => {
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
 
-      await gateway.broadcastRoomState('ABC123');
+      await gateway.broadcastRoomState('ABCDEF');
 
-      expect(mockServer.to).toHaveBeenCalledWith('ABC123');
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
         room: mockRoom,
         players: mockPlayers,
@@ -141,10 +141,10 @@ describe('RoomGateway', () => {
       roomService.markPlayerOnline.mockResolvedValue(undefined);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
 
-      await gateway.handleJoin(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(mockClient.join).toHaveBeenCalledWith('ABC123');
-      expect(roomService.markPlayerOnline).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(mockClient.join).toHaveBeenCalledWith('ABCDEF');
+      expect(roomService.markPlayerOnline).toHaveBeenCalledWith('ABCDEF', 'user-2');
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', expect.any(Object));
       expect(mockServer.emit).toHaveBeenCalledWith('room:reconnected', { userId: 'user-2' });
     });
@@ -155,9 +155,9 @@ describe('RoomGateway', () => {
       roomService.isPlayerOffline.mockResolvedValue(false);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
 
-      await gateway.handleJoin(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(mockClient.join).toHaveBeenCalledWith('ABC123');
+      expect(mockClient.join).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', expect.any(Object));
     });
   });
@@ -184,12 +184,12 @@ describe('RoomGateway', () => {
         playerCount: 2,
       });
 
-      await gateway.handleJoin(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(mockClient.join).toHaveBeenCalledWith('ABC123');
+      expect(mockClient.join).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', expect.any(Object));
       // player-joined is emitted via client.to(room).emit(), not server.emit()
-      expect(mockClient.to).toHaveBeenCalledWith('ABC123');
+      expect(mockClient.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockClient.emit).toHaveBeenCalledWith('room:player-joined', {
         player: newPlayer,
         playerCount: 2,
@@ -201,10 +201,10 @@ describe('RoomGateway', () => {
     it('emits player-left and broadcasts room state', async () => {
       roomService.getPlayerCount.mockResolvedValue(1);
 
-      await gateway.handleLeave(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(roomService.leaveRoom).toHaveBeenCalledWith('ABC123', 'user-2');
-      expect(mockClient.to).toHaveBeenCalledWith('ABC123');
+      expect(roomService.leaveRoom).toHaveBeenCalledWith('ABCDEF', 'user-2');
+      expect(mockClient.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockClient.emit).toHaveBeenCalledWith('room:player-left', {
         userId: 'user-2',
         playerCount: 1,
@@ -220,11 +220,11 @@ describe('RoomGateway', () => {
       roomService.getPlayers.mockResolvedValue(mockPlayers);
 
       await gateway.handleKick(mockClient, {
-        roomCode: 'ABC123',
+        roomCode: 'ABCDEF',
         targetUserId: 'user-3',
       });
 
-      expect(mockServer.to).toHaveBeenCalledWith('ABC123');
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:player-left', {
         userId: 'user-3',
         playerCount: 1,
@@ -245,12 +245,12 @@ describe('RoomGateway', () => {
       });
 
       await gateway.handleSettingsUpdate(mockClient, {
-        roomCode: 'ABC123',
+        roomCode: 'ABCDEF',
         maxPlayers: 8,
         roleConfig: { loyalServants: 4 },
       });
 
-      expect(mockClient.to).toHaveBeenCalledWith('ABC123');
+      expect(mockClient.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockClient.emit).toHaveBeenCalledWith('room:settings-updated', expect.objectContaining({
         maxPlayers: 8,
       }));
@@ -262,7 +262,7 @@ describe('RoomGateway', () => {
       });
 
       await gateway.handleSettingsUpdate(mockClient, {
-        roomCode: 'ABC123',
+        roomCode: 'ABCDEF',
         roleConfig: { loyalServants: -1 },
       });
 
@@ -280,11 +280,11 @@ describe('RoomGateway', () => {
       roomService.getPlayers.mockResolvedValue(mockPlayers);
       const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
 
-      await gateway.handleEnd(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleEnd(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(roomService.endGame).toHaveBeenCalledWith('ABC123', 'user-2');
-      expect(broadcastSpy).toHaveBeenCalledWith('ABC123');
-      expect(mockServer.to).toHaveBeenCalledWith('ABC123');
+      expect(roomService.endGame).toHaveBeenCalledWith('ABCDEF', 'user-2');
+      expect(broadcastSpy).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:ended', { status: 'WAITING' });
 
       broadcastSpy.mockRestore();
@@ -293,7 +293,7 @@ describe('RoomGateway', () => {
     it('error → emits room:error to client', async () => {
       roomService.endGame.mockResolvedValue({ error: '游戏尚未开始' });
 
-      await gateway.handleEnd(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleEnd(mockClient, { roomCode: 'ABCDEF' });
 
       expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
         code: 'ROOM_ERROR',
@@ -314,9 +314,9 @@ describe('RoomGateway', () => {
       mockServer.sockets.set('socket-1', mockClient);
       (gateway as any).userSocketMap.set('user-2', new Set(['socket-1']));
 
-      await gateway.handleStart(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleStart(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(roomService.startGame).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(roomService.startGame).toHaveBeenCalledWith('ABCDEF', 'user-2');
       expect(mockClient.emit).toHaveBeenCalledWith('room:started', { yourRole: '梅林' });
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
         room: mockRoom,

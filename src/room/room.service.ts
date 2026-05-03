@@ -9,7 +9,7 @@ import { assignSgsRoles, SgsRoleConfig, SgsRoleConfigSchema, getSgsDefaultConfig
 import { assignSeat } from './seat-assigner';
 import { customAlphabet } from 'nanoid';
 
-const generateRoomCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6);
+const generateRoomCode = customAlphabet('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6);
 
 interface RoomBaseInfo {
   id: string;

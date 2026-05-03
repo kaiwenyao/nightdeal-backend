@@ -18,7 +18,7 @@ describe('RoomController', () => {
 
   const mockRoom: RoomInfo = {
     id: 'room-1',
-    code: 'ABC123',
+    code: 'ABCDEF',
     hostId: 'user-1',
     status: 'WAITING',
     gameType: GameType.AVALON,
@@ -98,19 +98,19 @@ describe('RoomController', () => {
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
 
-      const result = await controller.updateRoomSettings(mockReq, 'ABC123', {
+      const result = await controller.updateRoomSettings(mockReq, 'ABCDEF', {
         maxPlayers: 8,
         roleConfig: { merlin: true, loyalServants: 3, minions: 2 },
       });
 
       expect(roomService.updateRoomSettings).toHaveBeenCalledWith(
-        'ABC123',
+        'ABCDEF',
         'user-1',
         { maxPlayers: 8, roleConfig: { merlin: true, loyalServants: 3, minions: 2 } },
       );
       expect(result).toMatchObject({
         id: 'room-1',
-        code: 'ABC123',
+        code: 'ABCDEF',
         status: 'WAITING',
         maxPlayers: 8,
         host: { id: 'user-1', nickName: 'Host', avatarUrl: 'https://example.com/1.png' },
@@ -122,7 +122,7 @@ describe('RoomController', () => {
       roomService.updateRoomSettings.mockResolvedValue({ error: '仅房主可以修改设置' });
 
       await expect(
-        controller.updateRoomSettings(mockReq, 'ABC123', { maxPlayers: 8 }),
+        controller.updateRoomSettings(mockReq, 'ABCDEF', { maxPlayers: 8 }),
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -132,7 +132,7 @@ describe('RoomController', () => {
       });
 
       await expect(
-        controller.updateRoomSettings(mockReq, 'ABC123', {
+        controller.updateRoomSettings(mockReq, 'ABCDEF', {
           roleConfig: { loyalServants: -1 },
         }),
       ).rejects.toThrow(BadRequestException);
@@ -144,7 +144,7 @@ describe('RoomController', () => {
       });
 
       await expect(
-        controller.updateRoomSettings(mockReq, 'ABC123', { maxPlayers: 5 }),
+        controller.updateRoomSettings(mockReq, 'ABCDEF', { maxPlayers: 5 }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -154,7 +154,7 @@ describe('RoomController', () => {
       });
 
       await expect(
-        controller.updateRoomSettings(mockReq, 'ABC123', { maxPlayers: 8 }),
+        controller.updateRoomSettings(mockReq, 'ABCDEF', { maxPlayers: 8 }),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -184,7 +184,7 @@ describe('RoomController', () => {
       );
       expect(result).toEqual({
         id: 'room-1',
-        code: 'ABC123',
+        code: 'ABCDEF',
         status: 'WAITING',
         gameType: 'AVALON',
         roleConfig: mockRoom.roleConfig,
@@ -210,11 +210,11 @@ describe('RoomController', () => {
       roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
       roomService.getPlayerCount.mockResolvedValue(1);
 
-      const result = await controller.leaveRoom(mockReq, 'abc123');
+      const result = await controller.leaveRoom(mockReq, 'abcdef');
 
-      expect(roomService.leaveRoom).toHaveBeenCalledWith('ABC123', 'user-1');
-      expect(roomGateway.evictUserFromRoom).toHaveBeenCalledWith('user-1', 'ABC123');
-      expect(roomGateway.broadcastRoomState).toHaveBeenCalledWith('ABC123');
+      expect(roomService.leaveRoom).toHaveBeenCalledWith('ABCDEF', 'user-1');
+      expect(roomGateway.evictUserFromRoom).toHaveBeenCalledWith('user-1', 'ABCDEF');
+      expect(roomGateway.broadcastRoomState).toHaveBeenCalledWith('ABCDEF');
       expect(result).toEqual({ success: true });
     });
 
@@ -228,7 +228,7 @@ describe('RoomController', () => {
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayer.mockResolvedValue(null);
 
-      await expect(controller.leaveRoom(mockReq, 'abc123')).rejects.toThrow(BadRequestException);
+      await expect(controller.leaveRoom(mockReq, 'abcdef')).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -236,10 +236,10 @@ describe('RoomController', () => {
     it('kicks player and notifies socket clients', async () => {
       roomService.kickPlayer.mockResolvedValue({ success: true });
 
-      const result = await controller.kickPlayer(mockReq, 'abc123', { userId: 'user-2' });
+      const result = await controller.kickPlayer(mockReq, 'abcdef', { userId: 'user-2' });
 
-      expect(roomService.kickPlayer).toHaveBeenCalledWith('ABC123', 'user-1', 'user-2');
-      expect(roomGateway.notifyClientsAfterKick).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(roomService.kickPlayer).toHaveBeenCalledWith('ABCDEF', 'user-1', 'user-2');
+      expect(roomGateway.notifyClientsAfterKick).toHaveBeenCalledWith('ABCDEF', 'user-2');
       expect(result).toEqual({ success: true });
     });
 
@@ -247,7 +247,7 @@ describe('RoomController', () => {
       roomService.kickPlayer.mockResolvedValue({ error: '仅房主可以踢人' });
 
       await expect(
-        controller.kickPlayer(mockReq, 'abc123', { userId: 'user-2' }),
+        controller.kickPlayer(mockReq, 'abcdef', { userId: 'user-2' }),
       ).rejects.toThrow(BadRequestException);
       expect(roomGateway.notifyClientsAfterKick).not.toHaveBeenCalled();
     });
@@ -257,17 +257,17 @@ describe('RoomController', () => {
     it('host ends game successfully → 200 success', async () => {
       roomService.endGame.mockResolvedValue({ success: true });
 
-      const result = await controller.endGame(mockReq, 'abc123');
+      const result = await controller.endGame(mockReq, 'abcdef');
 
-      expect(roomService.endGame).toHaveBeenCalledWith('ABC123', 'user-1');
-      expect(roomGateway.notifyClientsAfterEnd).toHaveBeenCalledWith('ABC123');
+      expect(roomService.endGame).toHaveBeenCalledWith('ABCDEF', 'user-1');
+      expect(roomGateway.notifyClientsAfterEnd).toHaveBeenCalledWith('ABCDEF');
       expect(result).toEqual({ success: true });
     });
 
     it('service error → 400 BadRequestException', async () => {
       roomService.endGame.mockResolvedValue({ error: '游戏尚未开始' });
 
-      await expect(controller.endGame(mockReq, 'abc123')).rejects.toThrow(
+      await expect(controller.endGame(mockReq, 'abcdef')).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -280,10 +280,10 @@ describe('RoomController', () => {
       ];
       roomService.startGame.mockResolvedValue({ assignments: mockAssignments });
 
-      const result = await controller.startGame(mockReq, 'abc123');
+      const result = await controller.startGame(mockReq, 'abcdef');
 
-      expect(roomService.startGame).toHaveBeenCalledWith('ABC123', 'user-1');
-      expect(roomGateway.notifyClientsAfterStart).toHaveBeenCalledWith('ABC123', mockAssignments);
+      expect(roomService.startGame).toHaveBeenCalledWith('ABCDEF', 'user-1');
+      expect(roomGateway.notifyClientsAfterStart).toHaveBeenCalledWith('ABCDEF', mockAssignments);
       expect(result).toEqual({ success: true });
     });
   });

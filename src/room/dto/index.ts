@@ -1,31 +1,38 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
 import { GameType } from '../../../prisma/generated/prisma/client.js';
 import { PartialRoleConfig } from '../role-config.schema';
 import { SgsRoleConfig } from '../sgs-role-assigner';
 
 export class JoinRoomDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsString()
   @Length(6, 6)
-  @Matches(/^[A-Za-z0-9]{6}$/, { message: '房间码格式无效' })
+  @Matches(/^[A-Z]{6}$/, { message: '房间码格式无效' })
   roomCode: string;
 }
 
 export class LeaveRoomDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsString()
   @Length(6, 6)
+  @Matches(/^[A-Z]{6}$/, { message: '房间码格式无效' })
   roomCode: string;
 }
 
 export class StartGameDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsString()
   @Length(6, 6)
+  @Matches(/^[A-Z]{6}$/, { message: '房间码格式无效' })
   roomCode: string;
 }
 
 export class KickPlayerDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsString()
   @Length(6, 6)
+  @Matches(/^[A-Z]{6}$/, { message: '房间码格式无效' })
   roomCode: string;
 
   @IsString()
@@ -79,9 +86,10 @@ export class UpdateRoomSettingsDto {
 
 // WebSocket payload for updating room settings
 export class SettingsUpdateDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsString()
   @Length(6, 6)
-  @Matches(/^[A-Za-z0-9]{6}$/, { message: '房间码格式无效' })
+  @Matches(/^[A-Z]{6}$/, { message: '房间码格式无效' })
   roomCode: string;
 
   @IsOptional()

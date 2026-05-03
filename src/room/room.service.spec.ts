@@ -96,9 +96,9 @@ describe('RoomService', () => {
           seatNo: 1,
         },
       });
-      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z0-9]{6}$/), 'status', 'WAITING');
-      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z0-9]{6}$/), 'hostId', 'host-1');
-      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z0-9]{6}$/), 'playerCount', '1');
+      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'status', 'WAITING');
+      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'hostId', 'host-1');
+      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'playerCount', '1');
     });
 
     it('rejects Avalon when maxPlayers below minimum', async () => {
