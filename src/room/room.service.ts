@@ -147,6 +147,10 @@ export class RoomService {
   ): Promise<RoomInfo | { error: string }> {
     const resolvedMaxPlayers = maxPlayers || (gameType === GameType.SGS ? 2 : 5);
     const isSgs = gameType === GameType.SGS;
+    const minForGame = isSgs ? 2 : 5;
+    if (resolvedMaxPlayers < minForGame || resolvedMaxPlayers > 10) {
+      return { error: `房间人数需在 ${minForGame}-10 人之间` };
+    }
 
     let config: RoleConfig | SgsRoleConfig;
     if (isSgs) {
@@ -504,6 +508,11 @@ export class RoomService {
         return {
           error: `当前已有${playerCount}名玩家，无法减少至${data.maxPlayers}人`,
         };
+      }
+      const minForGame = room.gameType === GameType.SGS ? 2 : 5;
+      const maxForGame = 10;
+      if (data.maxPlayers < minForGame || data.maxPlayers > maxForGame) {
+        return { error: `房间人数需在 ${minForGame}-${maxForGame} 人之间` };
       }
       updates.maxPlayers = data.maxPlayers;
 

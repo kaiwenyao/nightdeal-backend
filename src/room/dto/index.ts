@@ -48,7 +48,7 @@ export class CreateRoomDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @Min(5)
+  @Min(2)
   @Max(10)
   maxPlayers?: number;
 }
@@ -69,7 +69,7 @@ export class UpdateRoomSettingsDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @Min(5)
+  @Min(2)
   @Max(10)
   maxPlayers?: number;
 
@@ -87,7 +87,7 @@ export class SettingsUpdateDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @Min(5)
+  @Min(2)
   @Max(10)
   maxPlayers?: number;
 

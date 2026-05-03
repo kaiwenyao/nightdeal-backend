@@ -101,6 +101,40 @@ describe('RoomService', () => {
       expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z0-9]{6}$/), 'playerCount', '1');
     });
 
+    it('rejects Avalon when maxPlayers below minimum', async () => {
+      const result = await service.createRoom('host-1', undefined, 4, GameType.AVALON);
+
+      expect(result).toEqual({ error: '房间人数需在 5-10 人之间' });
+    });
+
+    it('accepts SGS with maxPlayers 2', async () => {
+      const mockSgsRoom = {
+        id: 'room-sgs',
+        code: 'SGS001',
+        hostId: 'host-1',
+        status: 'WAITING',
+        gameType: GameType.SGS,
+        roleConfig: { monarch: 1, loyalist: 0, rebel: 1, traitor: 0 },
+        maxPlayers: 2,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      mockPrisma.room.findUnique.mockResolvedValue(null);
+      mockPrisma.room.create.mockResolvedValue(mockSgsRoom);
+      mockPrisma.roomPlayer.create.mockResolvedValue({
+        id: 'player-1',
+        roomId: 'room-sgs',
+        userId: 'host-1',
+        seatNo: 1,
+        joinedAt: new Date(),
+      });
+
+      const result = await service.createRoom('host-1', undefined, 2, GameType.SGS);
+
+      expect(result).not.toHaveProperty('error');
+      expect(result).toMatchObject({ maxPlayers: 2, gameType: GameType.SGS });
+    });
+
     it('with invalid roleConfig returns { error }', async () => {
       const invalidConfig = { loyalServants: 99 };
 
@@ -171,6 +205,44 @@ describe('RoomService', () => {
       expect(result).toHaveProperty('error');
       expect((result as any).error).toContain('当前已有6名玩家');
       expect((result as any).error).toContain('无法减少至4人');
+    });
+
+    it('rejects Avalon maxPlayers below game minimum when above player count', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.roomPlayer.count.mockResolvedValue(3);
+
+      const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
+        maxPlayers: 4,
+      });
+
+      expect(result).toEqual({ error: '房间人数需在 5-10 人之间' });
+    });
+
+    it('allows SGS room to set maxPlayers to 2', async () => {
+      const sgsRoom = {
+        ...mockRoom,
+        gameType: GameType.SGS,
+        roleConfig: { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 },
+        maxPlayers: 5,
+      };
+      const updatedSgs = {
+        ...sgsRoom,
+        maxPlayers: 2,
+        roleConfig: { monarch: 1, loyalist: 0, rebel: 1, traitor: 0 },
+      };
+      mockPrisma.room.findUnique
+        .mockResolvedValueOnce(sgsRoom)
+        .mockResolvedValueOnce(sgsRoom)
+        .mockResolvedValueOnce(updatedSgs);
+      mockPrisma.room.update.mockResolvedValue(updatedSgs);
+      mockPrisma.roomPlayer.count.mockResolvedValue(1);
+
+      const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
+        maxPlayers: 2,
+      });
+
+      expect(result).toHaveProperty('maxPlayers', 2);
+      expect(mockPrisma.room.update).toHaveBeenCalled();
     });
 
     it('rejects invalid roleConfig', async () => {
