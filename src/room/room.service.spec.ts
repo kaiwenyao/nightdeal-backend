@@ -269,4 +269,103 @@ describe('RoomService', () => {
       expect(mockRedis.hset).toHaveBeenCalledWith('room:ABCDEF', 'playerCount', '1');
     });
   });
+
+  describe('restartGame', () => {
+    const mockSgsRoom = {
+      id: 'room-1',
+      code: 'ABCDEF',
+      hostId: 'host-1',
+      status: 'PLAYING' as const,
+      gameType: 'SGS' as const,
+      roleConfig: { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 },
+      maxPlayers: 5,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const mockAvalonRoom = {
+      id: 'room-1',
+      code: 'ABCDEF',
+      hostId: 'host-1',
+      status: 'PLAYING' as const,
+      gameType: 'AVALON' as const,
+      roleConfig: { merlin: true, percival: false, mordred: false, morgana: false, oberon: false, assassin: true, loyalServants: 2, minions: 1 },
+      maxPlayers: 5,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const mockPlayers = [
+      { id: 'p1', userId: 'u1', seatNo: 1, isOnline: true, joinedAt: new Date(), user: { id: 'u1', nickName: 'P1', avatarUrl: '' } },
+      { id: 'p2', userId: 'u2', seatNo: 2, isOnline: true, joinedAt: new Date(), user: { id: 'u2', nickName: 'P2', avatarUrl: '' } },
+      { id: 'p3', userId: 'u3', seatNo: 3, isOnline: true, joinedAt: new Date(), user: { id: 'u3', nickName: 'P3', avatarUrl: '' } },
+      { id: 'p4', userId: 'u4', seatNo: 4, isOnline: true, joinedAt: new Date(), user: { id: 'u4', nickName: 'P4', avatarUrl: '' } },
+      { id: 'p5', userId: 'u5', seatNo: 5, isOnline: true, joinedAt: new Date(), user: { id: 'u5', nickName: 'P5', avatarUrl: '' } },
+    ];
+
+    it('SGS room → returns role assignments', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockSgsRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(mockPlayers);
+      mockPrisma.roomPlayer.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.restartGame('ABCDEF', 'host-1');
+
+      expect('error' in result).toBe(false);
+      if (!('error' in result)) {
+        expect(result.assignments).toHaveLength(5);
+        expect(result.assignments.map(a => a.role)).toContain('主公');
+        expect(result.assignments.map(a => a.role)).toContain('忠臣');
+        expect(result.assignments.map(a => a.role)).toContain('内奸');
+        expect(result.assignments.map(a => a.role)).toContain('反贼');
+      }
+      expect(mockPrisma.gameRecord.create).toHaveBeenCalled();
+    });
+
+    it('Avalon room → returns role assignments', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockAvalonRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(mockPlayers);
+      mockPrisma.roomPlayer.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.restartGame('ABCDEF', 'host-1');
+
+      expect('error' in result).toBe(false);
+      if (!('error' in result)) {
+        expect(result.assignments).toHaveLength(5);
+      }
+      expect(mockPrisma.gameRecord.create).toHaveBeenCalled();
+    });
+
+    it('non-existent room → returns error', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(null);
+
+      const result = await service.restartGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: '房间不存在' });
+    });
+
+    it('non-host → returns error', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockSgsRoom);
+
+      const result = await service.restartGame('ABCDEF', 'other-user');
+
+      expect(result).toEqual({ error: '仅房主可以重开游戏' });
+    });
+
+    it('room not in PLAYING → returns error', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue({ ...mockSgsRoom, status: 'WAITING' });
+
+      const result = await service.restartGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: '游戏尚未开始' });
+    });
+
+    it('less than 5 players → returns error', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockSgsRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(mockPlayers.slice(0, 3));
+
+      const result = await service.restartGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: '至少需要 5 名玩家' });
+    });
+  });
 });

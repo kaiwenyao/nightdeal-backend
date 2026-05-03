@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { RoleConfig, roleConfigSchema, getDefaultConfig, PartialRoleConfig } from './role-config.schema';
 import { assignRoles, RoleAssignment } from './role-assigner';
+import { assignSgsRoles, SgsRoleConfig, getSgsDefaultConfig } from './sgs-role-assigner';
 import { assignSeat } from './seat-assigner';
 import { customAlphabet } from 'nanoid';
 
@@ -14,6 +15,7 @@ export interface RoomInfo {
   code: string;
   hostId: string;
   status: string;
+  gameType: string;
   roleConfig: RoleConfig;
   maxPlayers: number;
   createdAt: Date;
@@ -56,6 +58,7 @@ export class RoomService {
     if (!room) return null;
     return {
       ...room,
+      gameType: room.gameType as string,
       roleConfig: room.roleConfig as RoleConfig,
     };
   }
@@ -125,25 +128,38 @@ export class RoomService {
     };
   }
 
-  async createRoom(hostId: string, roleConfig?: PartialRoleConfig, maxPlayers?: number): Promise<RoomInfo | { error: string }> {
+  async createRoom(
+    hostId: string,
+    roleConfig?: PartialRoleConfig,
+    maxPlayers?: number,
+    gameType = 'AVALON',
+  ): Promise<RoomInfo | { error: string }> {
     const resolvedMaxPlayers = maxPlayers || 5;
-    // Use default config when roleConfig is not provided OR is an empty object
-    const resolvedRoleConfig = (roleConfig && Object.keys(roleConfig).length > 0)
-      ? roleConfig
-      : getDefaultConfig(resolvedMaxPlayers);
-    const parseResult = roleConfigSchema.safeParse(resolvedRoleConfig);
-    if (!parseResult.success) {
-      const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
-      return { error: '角色配置格式无效: ' + errorMessages };
+    const isSgs = gameType === 'SGS';
+
+    let config: RoleConfig;
+    if (isSgs) {
+      const sgsConfig = getSgsDefaultConfig(resolvedMaxPlayers);
+      config = sgsConfig as unknown as RoleConfig;
+    } else {
+      const resolvedRoleConfig = (roleConfig && Object.keys(roleConfig).length > 0)
+        ? roleConfig
+        : getDefaultConfig(resolvedMaxPlayers);
+      const parseResult = roleConfigSchema.safeParse(resolvedRoleConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: '角色配置格式无效: ' + errorMessages };
+      }
+      config = parseResult.data;
+      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+        + config.loyalServants + config.minions;
+      if (totalRoles !== resolvedMaxPlayers) {
+        return { error: `角色总数(${totalRoles})与房间人数(${resolvedMaxPlayers})不匹配` };
+      }
     }
-    const config = parseResult.data;
-    const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
-      + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
-      + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
-      + config.loyalServants + config.minions;
-    if (totalRoles !== resolvedMaxPlayers) {
-      return { error: `角色总数(${totalRoles})与房间人数(${resolvedMaxPlayers})不匹配` };
-    }
+
     const code = await this.generateUniqueCode();
 
     const room = await this.prisma.$transaction(async (tx: any) => {
@@ -151,6 +167,7 @@ export class RoomService {
         data: {
           code,
           hostId,
+          gameType: isSgs ? 'SGS' : 'AVALON',
           roleConfig: config,
           maxPlayers: resolvedMaxPlayers,
         },
@@ -174,6 +191,7 @@ export class RoomService {
 
     return {
       ...room,
+      gameType: isSgs ? 'SGS' : 'AVALON',
       roleConfig: config,
     };
   }
@@ -274,24 +292,39 @@ export class RoomService {
     const players = await this.getPlayers(roomCode);
     if (players.length < 5) return { error: '至少需要 5 名玩家' };
 
-    const parseResult = roleConfigSchema.safeParse(room.roleConfig);
-    if (!parseResult.success) {
-      const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
-      return { error: '角色配置格式无效: ' + errorMessages };
-    }
-    const config = parseResult.data;
-    const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
-      + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
-      + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
-      + config.loyalServants + config.minions;
-    if (totalRoles !== players.length) {
-      return { error: `角色总数(${totalRoles})与玩家数(${players.length})不匹配` };
-    }
+    let assignments: RoleAssignment[];
 
-    const assignments = assignRoles(
-      players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
-      config,
-    );
+    if (room.gameType === 'SGS') {
+      const sgsConfig = room.roleConfig as unknown as SgsRoleConfig;
+      const sgsAssignments = assignSgsRoles(
+        players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
+        sgsConfig,
+      );
+      assignments = sgsAssignments.map((a) => ({
+        seatNo: a.seatNo,
+        userId: a.userId,
+        role: a.role,
+        team: a.team as 'good' | 'evil',
+      }));
+    } else {
+      const parseResult = roleConfigSchema.safeParse(room.roleConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: '角色配置格式无效: ' + errorMessages };
+      }
+      const config = parseResult.data;
+      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+        + config.loyalServants + config.minions;
+      if (totalRoles !== players.length) {
+        return { error: `角色总数(${totalRoles})与玩家数(${players.length})不匹配` };
+      }
+      assignments = assignRoles(
+        players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
+        config,
+      );
+    }
 
     await this.prisma.$transaction(async (tx: any) => {
       for (const assignment of assignments) {
@@ -317,6 +350,77 @@ export class RoomService {
     });
 
     await this.redis.hset(`room:${roomCode}`, 'status', 'PLAYING');
+
+    return { assignments };
+  }
+
+  async restartGame(roomCode: string, hostId: string): Promise<StartResult | { error: string }> {
+    const room = await this.getRoom(roomCode);
+    if (!room) return { error: '房间不存在' };
+    if (room.hostId !== hostId) return { error: '仅房主可以重开游戏' };
+    if (room.status !== 'PLAYING') return { error: '游戏尚未开始' };
+
+    const players = await this.getPlayers(roomCode);
+    if (players.length < 5) return { error: '至少需要 5 名玩家' };
+
+    let assignments: RoleAssignment[];
+
+    if (room.gameType === 'SGS') {
+      const sgsConfig = room.roleConfig as unknown as SgsRoleConfig;
+      const sgsAssignments = assignSgsRoles(
+        players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
+        sgsConfig,
+      );
+      assignments = sgsAssignments.map((a) => ({
+        seatNo: a.seatNo,
+        userId: a.userId,
+        role: a.role,
+        team: a.team as 'good' | 'evil',
+      }));
+    } else {
+      const parseResult = roleConfigSchema.safeParse(room.roleConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: '角色配置格式无效: ' + errorMessages };
+      }
+      const config = parseResult.data;
+      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+        + config.loyalServants + config.minions;
+      if (totalRoles !== players.length) {
+        return { error: `角色总数(${totalRoles})与玩家数(${players.length})不匹配` };
+      }
+      assignments = assignRoles(
+        players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
+        config,
+      );
+    }
+
+    await this.prisma.$transaction(async (tx: any) => {
+      for (const player of players) {
+        await tx.roomPlayer.updateMany({
+          where: { roomId: room.id, userId: player.userId },
+          data: { role: null },
+        });
+      }
+
+      for (const assignment of assignments) {
+        await tx.roomPlayer.updateMany({
+          where: { roomId: room.id, userId: assignment.userId },
+          data: { role: assignment.role },
+        });
+      }
+
+      await tx.gameRecord.create({
+        data: {
+          roomId: room.id,
+          roles: Object.fromEntries(
+            assignments.map((a) => [a.seatNo, a.role])
+          ),
+        },
+      });
+    });
 
     return { assignments };
   }

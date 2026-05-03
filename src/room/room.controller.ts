@@ -35,6 +35,7 @@ export class RoomController {
       req.user.id,
       dto.roleConfig,
       dto.maxPlayers,
+      dto.gameType,
     );
     if ('error' in result) {
       throw new BadRequestException(result.error);
@@ -44,6 +45,7 @@ export class RoomController {
       id: room.id,
       code: room.code,
       status: room.status,
+      gameType: room.gameType,
       roleConfig: room.roleConfig,
       maxPlayers: room.maxPlayers,
       createdAt: room.createdAt,
@@ -98,6 +100,19 @@ export class RoomController {
   async startGame(@Request() req: any, @Param('code') raw: string) {
     const code = raw.toUpperCase();
     const result = await this.roomService.startGame(code, req.user.id);
+    if ('error' in result) {
+      throw new BadRequestException(result.error);
+    }
+    return result;
+  }
+
+  @Post(':code/restart')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '重开游戏', description: '房主重新发牌，房间不解散' })
+  @UseGuards(AuthGuard)
+  async restartGame(@Request() req: any, @Param('code') raw: string) {
+    const code = raw.toUpperCase();
+    const result = await this.roomService.restartGame(code, req.user.id);
     if ('error' in result) {
       throw new BadRequestException(result.error);
     }
@@ -197,6 +212,7 @@ export class RoomController {
       id: room.id,
       code: room.code,
       status: room.status,
+      gameType: room.gameType,
       roleConfig: room.roleConfig,
       maxPlayers: room.maxPlayers,
       host: host

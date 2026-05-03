@@ -21,11 +21,17 @@ model User {
   @@map("users")
 }
 
+enum GameType {
+  AVALON
+  SGS
+}
+
 model Room {
   id         String     @id @default(cuid())
   code       String     @unique @db.VarChar(6)
   hostId     String
   status     RoomStatus @default(WAITING)
+  gameType   GameType   @default(AVALON)
   roleConfig Json       @default("{}")
   maxPlayers Int        @default(10)
   createdAt  DateTime   @default(now())

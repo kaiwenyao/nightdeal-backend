@@ -230,6 +230,32 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('room:restart')
+  async handleRestart(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: StartGameDto,
+  ) {
+    const userId = client.data.userId;
+    const result = await this.roomService.restartGame(payload.roomCode, userId);
+
+    if ('error' in result) {
+      client.emit('room:error', { message: result.error });
+      return;
+    }
+
+    this.server.to(payload.roomCode).emit('room:restarted', {});
+
+    for (const assignment of result.assignments) {
+      const socketIds = this.userSocketMap.get(assignment.userId);
+      if (socketIds) {
+        for (const socketId of socketIds) {
+          const target = this.server.sockets.get(socketId);
+          target?.emit('room:started', { yourRole: assignment.role });
+        }
+      }
+    }
+  }
+
   @SubscribeMessage('room:settings-update')
   async handleSettingsUpdate(
     @ConnectedSocket() client: Socket,

@@ -37,6 +37,10 @@ export class KickRoomBodyDto {
 
 export class CreateRoomDto {
   @IsOptional()
+  @IsString()
+  gameType?: string;
+
+  @IsOptional()
   roleConfig?: PartialRoleConfig;
 
   @IsOptional()
