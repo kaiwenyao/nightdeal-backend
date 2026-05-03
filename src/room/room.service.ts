@@ -5,7 +5,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { RoleConfig, roleConfigSchema, getDefaultConfig, PartialRoleConfig } from './role-config.schema';
 import { assignRoles, RoleAssignment } from './role-assigner';
-import { assignSgsRoles, SgsRoleConfig, SgsRoleConfigSchema, getSgsDefaultConfig } from './sgs-role-assigner';
+import {
+  assignSgsRoles,
+  SgsRoleConfig,
+  SgsRoleConfigSchema,
+  getSgsDefaultConfig,
+  SGS_MAX_PLAYERS,
+} from './sgs-role-assigner';
 import { assignSeat } from './seat-assigner';
 import { customAlphabet } from 'nanoid';
 
@@ -148,8 +154,9 @@ export class RoomService {
     const resolvedMaxPlayers = maxPlayers || (gameType === GameType.SGS ? 2 : 5);
     const isSgs = gameType === GameType.SGS;
     const minForGame = isSgs ? 2 : 5;
-    if (resolvedMaxPlayers < minForGame || resolvedMaxPlayers > 10) {
-      return { error: `房间人数需在 ${minForGame}-10 人之间` };
+    const maxForGame = isSgs ? SGS_MAX_PLAYERS : 10;
+    if (resolvedMaxPlayers < minForGame || resolvedMaxPlayers > maxForGame) {
+      return { error: `房间人数需在 ${minForGame}-${maxForGame} 人之间` };
     }
 
     let config: RoleConfig | SgsRoleConfig;
@@ -495,7 +502,7 @@ export class RoomService {
         };
       }
       const minForGame = room.gameType === GameType.SGS ? 2 : 5;
-      const maxForGame = 10;
+      const maxForGame = room.gameType === GameType.SGS ? SGS_MAX_PLAYERS : 10;
       if (data.maxPlayers < minForGame || data.maxPlayers > maxForGame) {
         return { error: `房间人数需在 ${minForGame}-${maxForGame} 人之间` };
       }

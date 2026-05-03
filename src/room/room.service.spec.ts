@@ -107,6 +107,12 @@ describe('RoomService', () => {
       expect(result).toEqual({ error: '房间人数需在 5-10 人之间' });
     });
 
+    it('rejects SGS when maxPlayers above 8', async () => {
+      const result = await service.createRoom('host-1', undefined, 9, GameType.SGS);
+
+      expect(result).toEqual({ error: '房间人数需在 2-8 人之间' });
+    });
+
     it('accepts SGS with maxPlayers 2', async () => {
       const mockSgsRoom = {
         id: 'room-sgs',
@@ -216,6 +222,23 @@ describe('RoomService', () => {
       });
 
       expect(result).toEqual({ error: '房间人数需在 5-10 人之间' });
+    });
+
+    it('rejects SGS room when maxPlayers above 8', async () => {
+      const sgsRoom = {
+        ...mockRoom,
+        gameType: GameType.SGS,
+        roleConfig: { monarch: 1, loyalist: 2, rebel: 4, traitor: 1 },
+        maxPlayers: 8,
+      };
+      mockPrisma.room.findUnique.mockResolvedValue(sgsRoom);
+      mockPrisma.roomPlayer.count.mockResolvedValue(3);
+
+      const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
+        maxPlayers: 9,
+      });
+
+      expect(result).toEqual({ error: '房间人数需在 2-8 人之间' });
     });
 
     it('allows SGS room to set maxPlayers to 2', async () => {

@@ -3,6 +3,7 @@
 ## 1. 功能概述
 
 三国杀（SGS）身份牌发放功能允许：
+- 房间人数 **2–8 人**（创建与修改设置时由服务端校验）
 - 房主创建三国杀房间（gameType=SGS）
 - 玩家通过房间码加入
 - 房主开始游戏后系统自动分配身份牌
@@ -49,13 +50,15 @@ model Room {
 ```typescript
 // src/room/sgs-role-assigner.ts
 
+// 房间人数 2–8；超出范围时 getSgsDefaultConfig 会 clamp 到 [2,8]
 export const SGS_DEFAULT_CONFIGS: Record<number, SgsRoleConfig> = {
+  2:  { monarch: 1, loyalist: 0, rebel: 1, traitor: 0 },
+  3:  { monarch: 1, loyalist: 0, rebel: 2, traitor: 0 },
+  4:  { monarch: 0, loyalist: 2, rebel: 2, traitor: 0 },
   5:  { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 },
   6:  { monarch: 1, loyalist: 1, rebel: 3, traitor: 1 },
   7:  { monarch: 1, loyalist: 2, rebel: 3, traitor: 1 },
   8:  { monarch: 1, loyalist: 2, rebel: 4, traitor: 1 },
-  9:  { monarch: 1, loyalist: 2, rebel: 4, traitor: 2 },
-  10: { monarch: 1, loyalist: 3, rebel: 4, traitor: 2 },
 };
 ```
 

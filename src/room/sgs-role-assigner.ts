@@ -10,6 +10,9 @@ export const SgsRoleConfigSchema = z.object({
 
 export type SgsRoleConfig = z.infer<typeof SgsRoleConfigSchema>;
 
+export const SGS_MIN_PLAYERS = 2;
+export const SGS_MAX_PLAYERS = 8;
+
 export interface SgsRoleAssignment {
   seatNo: number;
   userId: string;
@@ -25,12 +28,13 @@ export const SGS_DEFAULT_CONFIGS: Record<number, SgsRoleConfig> = {
   6: { monarch: 1, loyalist: 1, rebel: 3, traitor: 1 },
   7: { monarch: 1, loyalist: 2, rebel: 3, traitor: 1 },
   8: { monarch: 1, loyalist: 2, rebel: 4, traitor: 1 },
-  9: { monarch: 1, loyalist: 2, rebel: 4, traitor: 2 },
-  10: { monarch: 1, loyalist: 3, rebel: 4, traitor: 2 },
 };
 
 export function getSgsDefaultConfig(playerCount: number): SgsRoleConfig {
-  return SGS_DEFAULT_CONFIGS[playerCount] ?? SGS_DEFAULT_CONFIGS[5];
+  const raw = Number(playerCount);
+  const floored = Number.isFinite(raw) ? Math.floor(raw) : SGS_MIN_PLAYERS;
+  const n = Math.min(SGS_MAX_PLAYERS, Math.max(SGS_MIN_PLAYERS, floored));
+  return SGS_DEFAULT_CONFIGS[n] ?? SGS_DEFAULT_CONFIGS[SGS_MIN_PLAYERS];
 }
 
 export function assignSgsRoles(

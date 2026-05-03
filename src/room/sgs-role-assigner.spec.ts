@@ -22,13 +22,15 @@ describe('SgsRoleAssigner', () => {
       expect(getSgsDefaultConfig(8)).toEqual({ monarch: 1, loyalist: 2, rebel: 4, traitor: 1 });
     });
 
-    it('should return correct config for 10 players', () => {
-      expect(getSgsDefaultConfig(10)).toEqual({ monarch: 1, loyalist: 3, rebel: 4, traitor: 2 });
+    it('should clamp counts above 8 to the 8-player config', () => {
+      expect(getSgsDefaultConfig(9)).toEqual(SGS_DEFAULT_CONFIGS[8]);
+      expect(getSgsDefaultConfig(10)).toEqual(SGS_DEFAULT_CONFIGS[8]);
+      expect(getSgsDefaultConfig(11)).toEqual(SGS_DEFAULT_CONFIGS[8]);
     });
 
-    it('should fallback to 5-player config for unsupported counts', () => {
-      expect(getSgsDefaultConfig(1)).toEqual(SGS_DEFAULT_CONFIGS[5]);
-      expect(getSgsDefaultConfig(11)).toEqual(SGS_DEFAULT_CONFIGS[5]);
+    it('should clamp counts below 2 to the 2-player config', () => {
+      expect(getSgsDefaultConfig(1)).toEqual(SGS_DEFAULT_CONFIGS[2]);
+      expect(getSgsDefaultConfig(0)).toEqual(SGS_DEFAULT_CONFIGS[2]);
     });
   });
 
