@@ -38,7 +38,15 @@ export type GameRecord = $Result.DefaultSelection<Prisma.$GameRecordPayload>
  * Enums
  */
 export namespace $Enums {
-  export const RoomStatus: {
+  export const GameType: {
+  AVALON: 'AVALON',
+  SGS: 'SGS'
+};
+
+export type GameType = (typeof GameType)[keyof typeof GameType]
+
+
+export const RoomStatus: {
   WAITING: 'WAITING',
   PLAYING: 'PLAYING',
   FINISHED: 'FINISHED'
@@ -47,6 +55,10 @@ export namespace $Enums {
 export type RoomStatus = (typeof RoomStatus)[keyof typeof RoomStatus]
 
 }
+
+export type GameType = $Enums.GameType
+
+export const GameType: typeof $Enums.GameType
 
 export type RoomStatus = $Enums.RoomStatus
 
@@ -2377,6 +2389,7 @@ export namespace Prisma {
     code: string | null
     hostId: string | null
     status: $Enums.RoomStatus | null
+    gameType: $Enums.GameType | null
     maxPlayers: number | null
     createdAt: Date | null
     updatedAt: Date | null
@@ -2387,6 +2400,7 @@ export namespace Prisma {
     code: string | null
     hostId: string | null
     status: $Enums.RoomStatus | null
+    gameType: $Enums.GameType | null
     maxPlayers: number | null
     createdAt: Date | null
     updatedAt: Date | null
@@ -2397,6 +2411,7 @@ export namespace Prisma {
     code: number
     hostId: number
     status: number
+    gameType: number
     roleConfig: number
     maxPlayers: number
     createdAt: number
@@ -2418,6 +2433,7 @@ export namespace Prisma {
     code?: true
     hostId?: true
     status?: true
+    gameType?: true
     maxPlayers?: true
     createdAt?: true
     updatedAt?: true
@@ -2428,6 +2444,7 @@ export namespace Prisma {
     code?: true
     hostId?: true
     status?: true
+    gameType?: true
     maxPlayers?: true
     createdAt?: true
     updatedAt?: true
@@ -2438,6 +2455,7 @@ export namespace Prisma {
     code?: true
     hostId?: true
     status?: true
+    gameType?: true
     roleConfig?: true
     maxPlayers?: true
     createdAt?: true
@@ -2536,6 +2554,7 @@ export namespace Prisma {
     code: string
     hostId: string
     status: $Enums.RoomStatus
+    gameType: $Enums.GameType
     roleConfig: JsonValue
     maxPlayers: number
     createdAt: Date
@@ -2566,6 +2585,7 @@ export namespace Prisma {
     code?: boolean
     hostId?: boolean
     status?: boolean
+    gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
     createdAt?: boolean
@@ -2581,6 +2601,7 @@ export namespace Prisma {
     code?: boolean
     hostId?: boolean
     status?: boolean
+    gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
     createdAt?: boolean
@@ -2593,6 +2614,7 @@ export namespace Prisma {
     code?: boolean
     hostId?: boolean
     status?: boolean
+    gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
     createdAt?: boolean
@@ -2605,13 +2627,14 @@ export namespace Prisma {
     code?: boolean
     hostId?: boolean
     status?: boolean
+    gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
     createdAt?: boolean
     updatedAt?: boolean
   }
 
-  export type RoomOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "code" | "hostId" | "status" | "roleConfig" | "maxPlayers" | "createdAt" | "updatedAt", ExtArgs["result"]["room"]>
+  export type RoomOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "code" | "hostId" | "status" | "gameType" | "roleConfig" | "maxPlayers" | "createdAt" | "updatedAt", ExtArgs["result"]["room"]>
   export type RoomInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     host?: boolean | UserDefaultArgs<ExtArgs>
     players?: boolean | Room$playersArgs<ExtArgs>
@@ -2637,6 +2660,7 @@ export namespace Prisma {
       code: string
       hostId: string
       status: $Enums.RoomStatus
+      gameType: $Enums.GameType
       roleConfig: Prisma.JsonValue
       maxPlayers: number
       createdAt: Date
@@ -3071,6 +3095,7 @@ export namespace Prisma {
     readonly code: FieldRef<"Room", 'String'>
     readonly hostId: FieldRef<"Room", 'String'>
     readonly status: FieldRef<"Room", 'RoomStatus'>
+    readonly gameType: FieldRef<"Room", 'GameType'>
     readonly roleConfig: FieldRef<"Room", 'Json'>
     readonly maxPlayers: FieldRef<"Room", 'Int'>
     readonly createdAt: FieldRef<"Room", 'DateTime'>
@@ -5750,6 +5775,7 @@ export namespace Prisma {
     code: 'code',
     hostId: 'hostId',
     status: 'status',
+    gameType: 'gameType',
     roleConfig: 'roleConfig',
     maxPlayers: 'maxPlayers',
     createdAt: 'createdAt',
@@ -5870,6 +5896,20 @@ export namespace Prisma {
 
 
   /**
+   * Reference to a field of type 'GameType'
+   */
+  export type EnumGameTypeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'GameType'>
+    
+
+
+  /**
+   * Reference to a field of type 'GameType[]'
+   */
+  export type ListEnumGameTypeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'GameType[]'>
+    
+
+
+  /**
    * Reference to a field of type 'Json'
    */
   export type JsonFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Json'>
@@ -5985,6 +6025,7 @@ export namespace Prisma {
     code?: StringFilter<"Room"> | string
     hostId?: StringFilter<"Room"> | string
     status?: EnumRoomStatusFilter<"Room"> | $Enums.RoomStatus
+    gameType?: EnumGameTypeFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonFilter<"Room">
     maxPlayers?: IntFilter<"Room"> | number
     createdAt?: DateTimeFilter<"Room"> | Date | string
@@ -5999,6 +6040,7 @@ export namespace Prisma {
     code?: SortOrder
     hostId?: SortOrder
     status?: SortOrder
+    gameType?: SortOrder
     roleConfig?: SortOrder
     maxPlayers?: SortOrder
     createdAt?: SortOrder
@@ -6016,6 +6058,7 @@ export namespace Prisma {
     NOT?: RoomWhereInput | RoomWhereInput[]
     hostId?: StringFilter<"Room"> | string
     status?: EnumRoomStatusFilter<"Room"> | $Enums.RoomStatus
+    gameType?: EnumGameTypeFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonFilter<"Room">
     maxPlayers?: IntFilter<"Room"> | number
     createdAt?: DateTimeFilter<"Room"> | Date | string
@@ -6030,6 +6073,7 @@ export namespace Prisma {
     code?: SortOrder
     hostId?: SortOrder
     status?: SortOrder
+    gameType?: SortOrder
     roleConfig?: SortOrder
     maxPlayers?: SortOrder
     createdAt?: SortOrder
@@ -6049,6 +6093,7 @@ export namespace Prisma {
     code?: StringWithAggregatesFilter<"Room"> | string
     hostId?: StringWithAggregatesFilter<"Room"> | string
     status?: EnumRoomStatusWithAggregatesFilter<"Room"> | $Enums.RoomStatus
+    gameType?: EnumGameTypeWithAggregatesFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonWithAggregatesFilter<"Room">
     maxPlayers?: IntWithAggregatesFilter<"Room"> | number
     createdAt?: DateTimeWithAggregatesFilter<"Room"> | Date | string
@@ -6252,6 +6297,7 @@ export namespace Prisma {
     id?: string
     code: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -6266,6 +6312,7 @@ export namespace Prisma {
     code: string
     hostId: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -6278,6 +6325,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     code?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -6292,6 +6340,7 @@ export namespace Prisma {
     code?: StringFieldUpdateOperationsInput | string
     hostId?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -6305,6 +6354,7 @@ export namespace Prisma {
     code: string
     hostId: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -6315,6 +6365,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     code?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -6326,6 +6377,7 @@ export namespace Prisma {
     code?: StringFieldUpdateOperationsInput | string
     hostId?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -6559,6 +6611,13 @@ export namespace Prisma {
     notIn?: $Enums.RoomStatus[] | ListEnumRoomStatusFieldRefInput<$PrismaModel>
     not?: NestedEnumRoomStatusFilter<$PrismaModel> | $Enums.RoomStatus
   }
+
+  export type EnumGameTypeFilter<$PrismaModel = never> = {
+    equals?: $Enums.GameType | EnumGameTypeFieldRefInput<$PrismaModel>
+    in?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    notIn?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    not?: NestedEnumGameTypeFilter<$PrismaModel> | $Enums.GameType
+  }
   export type JsonFilter<$PrismaModel = never> =
     | PatchUndefined<
         Either<Required<JsonFilterBase<$PrismaModel>>, Exclude<keyof Required<JsonFilterBase<$PrismaModel>>, 'path'>>,
@@ -6614,6 +6673,7 @@ export namespace Prisma {
     code?: SortOrder
     hostId?: SortOrder
     status?: SortOrder
+    gameType?: SortOrder
     roleConfig?: SortOrder
     maxPlayers?: SortOrder
     createdAt?: SortOrder
@@ -6629,6 +6689,7 @@ export namespace Prisma {
     code?: SortOrder
     hostId?: SortOrder
     status?: SortOrder
+    gameType?: SortOrder
     maxPlayers?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
@@ -6639,6 +6700,7 @@ export namespace Prisma {
     code?: SortOrder
     hostId?: SortOrder
     status?: SortOrder
+    gameType?: SortOrder
     maxPlayers?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
@@ -6656,6 +6718,16 @@ export namespace Prisma {
     _count?: NestedIntFilter<$PrismaModel>
     _min?: NestedEnumRoomStatusFilter<$PrismaModel>
     _max?: NestedEnumRoomStatusFilter<$PrismaModel>
+  }
+
+  export type EnumGameTypeWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: $Enums.GameType | EnumGameTypeFieldRefInput<$PrismaModel>
+    in?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    notIn?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    not?: NestedEnumGameTypeWithAggregatesFilter<$PrismaModel> | $Enums.GameType
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedEnumGameTypeFilter<$PrismaModel>
+    _max?: NestedEnumGameTypeFilter<$PrismaModel>
   }
   export type JsonWithAggregatesFilter<$PrismaModel = never> =
     | PatchUndefined<
@@ -6965,6 +7037,10 @@ export namespace Prisma {
     set?: $Enums.RoomStatus
   }
 
+  export type EnumGameTypeFieldUpdateOperationsInput = {
+    set?: $Enums.GameType
+  }
+
   export type IntFieldUpdateOperationsInput = {
     set?: number
     increment?: number
@@ -7161,6 +7237,13 @@ export namespace Prisma {
     not?: NestedEnumRoomStatusFilter<$PrismaModel> | $Enums.RoomStatus
   }
 
+  export type NestedEnumGameTypeFilter<$PrismaModel = never> = {
+    equals?: $Enums.GameType | EnumGameTypeFieldRefInput<$PrismaModel>
+    in?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    notIn?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    not?: NestedEnumGameTypeFilter<$PrismaModel> | $Enums.GameType
+  }
+
   export type NestedEnumRoomStatusWithAggregatesFilter<$PrismaModel = never> = {
     equals?: $Enums.RoomStatus | EnumRoomStatusFieldRefInput<$PrismaModel>
     in?: $Enums.RoomStatus[] | ListEnumRoomStatusFieldRefInput<$PrismaModel>
@@ -7169,6 +7252,16 @@ export namespace Prisma {
     _count?: NestedIntFilter<$PrismaModel>
     _min?: NestedEnumRoomStatusFilter<$PrismaModel>
     _max?: NestedEnumRoomStatusFilter<$PrismaModel>
+  }
+
+  export type NestedEnumGameTypeWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: $Enums.GameType | EnumGameTypeFieldRefInput<$PrismaModel>
+    in?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    notIn?: $Enums.GameType[] | ListEnumGameTypeFieldRefInput<$PrismaModel>
+    not?: NestedEnumGameTypeWithAggregatesFilter<$PrismaModel> | $Enums.GameType
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedEnumGameTypeFilter<$PrismaModel>
+    _max?: NestedEnumGameTypeFilter<$PrismaModel>
   }
   export type NestedJsonFilter<$PrismaModel = never> =
     | PatchUndefined<
@@ -7292,6 +7385,7 @@ export namespace Prisma {
     id?: string
     code: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -7304,6 +7398,7 @@ export namespace Prisma {
     id?: string
     code: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -7372,6 +7467,7 @@ export namespace Prisma {
     code?: StringFilter<"Room"> | string
     hostId?: StringFilter<"Room"> | string
     status?: EnumRoomStatusFilter<"Room"> | $Enums.RoomStatus
+    gameType?: EnumGameTypeFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonFilter<"Room">
     maxPlayers?: IntFilter<"Room"> | number
     createdAt?: DateTimeFilter<"Room"> | Date | string
@@ -7559,6 +7655,7 @@ export namespace Prisma {
     id?: string
     code: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -7572,6 +7669,7 @@ export namespace Prisma {
     code: string
     hostId: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -7624,6 +7722,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     code?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -7637,6 +7736,7 @@ export namespace Prisma {
     code?: StringFieldUpdateOperationsInput | string
     hostId?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -7679,6 +7779,7 @@ export namespace Prisma {
     id?: string
     code: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -7692,6 +7793,7 @@ export namespace Prisma {
     code: string
     hostId: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -7719,6 +7821,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     code?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -7732,6 +7835,7 @@ export namespace Prisma {
     code?: StringFieldUpdateOperationsInput | string
     hostId?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -7743,6 +7847,7 @@ export namespace Prisma {
     id?: string
     code: string
     status?: $Enums.RoomStatus
+    gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
     createdAt?: Date | string
@@ -7761,6 +7866,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     code?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -7773,6 +7879,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     code?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
@@ -7785,6 +7892,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     code?: StringFieldUpdateOperationsInput | string
     status?: EnumRoomStatusFieldUpdateOperationsInput | $Enums.RoomStatus
+    gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string

@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { RoleConfig } from './role-config.schema';
 
 export interface AvalonRoleConfig {
@@ -15,7 +16,7 @@ export interface RoleAssignment {
   seatNo: number;
   userId: string;
   role: string;
-  team: 'good' | 'evil';
+  team: 'good' | 'evil' | 'monarch' | 'rebel' | 'traitor';
 }
 
 export function assignRoles(
@@ -42,9 +43,9 @@ export function assignRoles(
     throw new Error('角色数量与玩家数量不匹配');
   }
 
-  // Fisher-Yates 洗牌
+  // Fisher-Yates shuffle (cryptographically secure index sampling)
   for (let i = rolePool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(0, i + 1);
     [rolePool[i], rolePool[j]] = [rolePool[j], rolePool[i]];
   }
 

@@ -4,6 +4,7 @@ import { Namespace, Socket } from 'socket.io';
 import { RoomGateway } from './room.gateway';
 import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
+import { GameType } from '../../prisma/generated/prisma/client.js';
 
 describe('RoomGateway', () => {
   let gateway: RoomGateway;
@@ -17,6 +18,7 @@ describe('RoomGateway', () => {
     code: 'ABC123',
     hostId: 'user-1',
     status: 'WAITING',
+    gameType: GameType.AVALON,
     roleConfig: {
       merlin: true,
       percival: false,
@@ -77,6 +79,7 @@ describe('RoomGateway', () => {
       updateRoomSettings: jest.fn(),
       kickPlayer: jest.fn(),
       startGame: jest.fn(),
+      restartGame: jest.fn(),
       getUserRooms: jest.fn(),
       updatePlayerInfo: jest.fn(),
     };
@@ -265,6 +268,67 @@ describe('RoomGateway', () => {
 
       expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
         message: '角色配置格式无效',
+      });
+    });
+  });
+
+  describe('handleRestart', () => {
+    it('success → emits room:restarted (with room snapshot), room:state', async () => {
+      const mockAssignments = [
+        { seatNo: 1, userId: 'user-1', role: '主公', team: 'good' as const },
+        { seatNo: 2, userId: 'user-2', role: '忠臣', team: 'good' as const },
+      ];
+      roomService.restartGame.mockResolvedValue({ assignments: mockAssignments });
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      await gateway.handleRestart(mockClient, { roomCode: 'ABC123' });
+
+      expect(roomService.restartGame).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(mockServer.to).toHaveBeenCalledWith('ABC123');
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        'room:restarted',
+        expect.objectContaining({
+          gameType: mockRoom.gameType,
+          roleConfig: mockRoom.roleConfig,
+        }),
+      );
+      expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
+        room: mockRoom,
+        players: mockPlayers,
+      });
+    });
+
+    it('error → emits room:error to client', async () => {
+      roomService.restartGame.mockResolvedValue({ error: '游戏尚未开始' });
+
+      await gateway.handleRestart(mockClient, { roomCode: 'ABC123' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        message: '游戏尚未开始',
+      });
+      expect(mockServer.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleStart', () => {
+    it('success → emits room:started to assignees and room:state', async () => {
+      const mockAssignments = [
+        { seatNo: 1, userId: 'user-2', role: '梅林', team: 'good' as const },
+      ];
+      roomService.startGame.mockResolvedValue({ assignments: mockAssignments });
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      mockServer.sockets.set('socket-1', mockClient);
+      (gateway as any).userSocketMap.set('user-2', new Set(['socket-1']));
+
+      await gateway.handleStart(mockClient, { roomCode: 'ABC123' });
+
+      expect(roomService.startGame).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(mockClient.emit).toHaveBeenCalledWith('room:started', { yourRole: '梅林' });
+      expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
+        room: mockRoom,
+        players: mockPlayers,
       });
     });
   });

@@ -134,6 +134,7 @@ exports.Prisma.RoomScalarFieldEnum = {
   code: 'code',
   hostId: 'hostId',
   status: 'status',
+  gameType: 'gameType',
   roleConfig: 'roleConfig',
   maxPlayers: 'maxPlayers',
   createdAt: 'createdAt',
@@ -185,6 +186,11 @@ exports.RoomStatus = exports.$Enums.RoomStatus = {
   WAITING: 'WAITING',
   PLAYING: 'PLAYING',
   FINISHED: 'FINISHED'
+};
+
+exports.GameType = exports.$Enums.GameType = {
+  AVALON: 'AVALON',
+  SGS: 'SGS'
 };
 
 exports.Prisma.ModelName = {

@@ -1,24 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { GameType, Prisma } from '../../prisma/generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { RoleConfig, roleConfigSchema, getDefaultConfig, PartialRoleConfig } from './role-config.schema';
 import { assignRoles, RoleAssignment } from './role-assigner';
+import { assignSgsRoles, SgsRoleConfig, SgsRoleConfigSchema, getSgsDefaultConfig } from './sgs-role-assigner';
 import { assignSeat } from './seat-assigner';
 import { customAlphabet } from 'nanoid';
 
 const generateRoomCode = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6);
 
-export interface RoomInfo {
+interface RoomBaseInfo {
   id: string;
   code: string;
   hostId: string;
   status: string;
-  roleConfig: RoleConfig;
   maxPlayers: number;
   createdAt: Date;
   updatedAt: Date;
 }
+
+export type RoomInfo =
+  | (RoomBaseInfo & { gameType: 'AVALON'; roleConfig: RoleConfig })
+  | (RoomBaseInfo & { gameType: 'SGS'; roleConfig: SgsRoleConfig });
 
 export interface PlayerInfo {
   id: string;
@@ -54,8 +59,17 @@ export class RoomService {
       where: { code: roomCode },
     });
     if (!room) return null;
+    if (room.gameType === GameType.SGS) {
+      return {
+        ...room,
+        gameType: GameType.SGS,
+        roleConfig: room.roleConfig as SgsRoleConfig,
+      };
+    }
+
     return {
       ...room,
+      gameType: GameType.AVALON,
       roleConfig: room.roleConfig as RoleConfig,
     };
   }
@@ -125,32 +139,57 @@ export class RoomService {
     };
   }
 
-  async createRoom(hostId: string, roleConfig?: PartialRoleConfig, maxPlayers?: number): Promise<RoomInfo | { error: string }> {
+  async createRoom(
+    hostId: string,
+    roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>,
+    maxPlayers?: number,
+    gameType: GameType = GameType.AVALON,
+  ): Promise<RoomInfo | { error: string }> {
     const resolvedMaxPlayers = maxPlayers || 5;
-    // Use default config when roleConfig is not provided OR is an empty object
-    const resolvedRoleConfig = (roleConfig && Object.keys(roleConfig).length > 0)
-      ? roleConfig
-      : getDefaultConfig(resolvedMaxPlayers);
-    const parseResult = roleConfigSchema.safeParse(resolvedRoleConfig);
-    if (!parseResult.success) {
-      const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
-      return { error: '角色配置格式无效: ' + errorMessages };
+    const isSgs = gameType === GameType.SGS;
+
+    let config: RoleConfig | SgsRoleConfig;
+    if (isSgs) {
+      const resolvedRoleConfig = (roleConfig && Object.keys(roleConfig).length > 0)
+        ? roleConfig
+        : getSgsDefaultConfig(resolvedMaxPlayers);
+      const parseResult = SgsRoleConfigSchema.safeParse(resolvedRoleConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: 'SGS 角色配置格式无效: ' + errorMessages };
+      }
+      config = parseResult.data;
+      const totalRoles = config.monarch + config.loyalist + config.rebel + config.traitor;
+      if (totalRoles !== resolvedMaxPlayers) {
+        return { error: `角色总数(${totalRoles})与房间人数(${resolvedMaxPlayers})不匹配` };
+      }
+    } else {
+      const resolvedRoleConfig = (roleConfig && Object.keys(roleConfig).length > 0)
+        ? roleConfig
+        : getDefaultConfig(resolvedMaxPlayers);
+      const parseResult = roleConfigSchema.safeParse(resolvedRoleConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: '角色配置格式无效: ' + errorMessages };
+      }
+      config = parseResult.data;
+      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+        + config.loyalServants + config.minions;
+      if (totalRoles !== resolvedMaxPlayers) {
+        return { error: `角色总数(${totalRoles})与房间人数(${resolvedMaxPlayers})不匹配` };
+      }
     }
-    const config = parseResult.data;
-    const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
-      + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
-      + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
-      + config.loyalServants + config.minions;
-    if (totalRoles !== resolvedMaxPlayers) {
-      return { error: `角色总数(${totalRoles})与房间人数(${resolvedMaxPlayers})不匹配` };
-    }
+
     const code = await this.generateUniqueCode();
 
-    const room = await this.prisma.$transaction(async (tx: any) => {
+    const room = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const createdRoom = await tx.room.create({
         data: {
           code,
           hostId,
+          gameType: isSgs ? GameType.SGS : GameType.AVALON,
           roleConfig: config,
           maxPlayers: resolvedMaxPlayers,
         },
@@ -172,9 +211,17 @@ export class RoomService {
     await this.redis.hset(`room:${code}`, 'playerCount', '1');
     await this.redis.hset(`room:${code}`, 'maxPlayers', String(resolvedMaxPlayers));
 
+    if (isSgs) {
+      return {
+        ...room,
+        gameType: GameType.SGS,
+        roleConfig: config as SgsRoleConfig,
+      };
+    }
     return {
       ...room,
-      roleConfig: config,
+      gameType: GameType.AVALON,
+      roleConfig: config as RoleConfig,
     };
   }
 
@@ -274,32 +321,12 @@ export class RoomService {
     const players = await this.getPlayers(roomCode);
     if (players.length < 5) return { error: '至少需要 5 名玩家' };
 
-    const parseResult = roleConfigSchema.safeParse(room.roleConfig);
-    if (!parseResult.success) {
-      const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
-      return { error: '角色配置格式无效: ' + errorMessages };
-    }
-    const config = parseResult.data;
-    const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
-      + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
-      + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
-      + config.loyalServants + config.minions;
-    if (totalRoles !== players.length) {
-      return { error: `角色总数(${totalRoles})与玩家数(${players.length})不匹配` };
-    }
+    const assignmentResult = this.computeRoleAssignments(room, players);
+    if ('error' in assignmentResult) return assignmentResult;
+    const { assignments } = assignmentResult;
 
-    const assignments = assignRoles(
-      players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
-      config,
-    );
-
-    await this.prisma.$transaction(async (tx: any) => {
-      for (const assignment of assignments) {
-        await tx.roomPlayer.updateMany({
-          where: { roomId: room.id, userId: assignment.userId },
-          data: { role: assignment.role },
-        });
-      }
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await this.persistAssignments(tx, room.id, assignments);
 
       await tx.room.update({
         where: { id: room.id },
@@ -319,6 +346,96 @@ export class RoomService {
     await this.redis.hset(`room:${roomCode}`, 'status', 'PLAYING');
 
     return { assignments };
+  }
+
+  async restartGame(roomCode: string, hostId: string): Promise<StartResult | { error: string }> {
+    const room = await this.getRoom(roomCode);
+    if (!room) return { error: '房间不存在' };
+    if (room.hostId !== hostId) return { error: '仅房主可以重开游戏' };
+    if (room.status !== 'PLAYING') return { error: '游戏尚未开始' };
+
+    const players = await this.getPlayers(roomCode);
+    if (players.length < 5) return { error: '至少需要 5 名玩家' };
+
+    const assignmentResult = this.computeRoleAssignments(room, players);
+    if ('error' in assignmentResult) return assignmentResult;
+    const { assignments } = assignmentResult;
+
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.roomPlayer.updateMany({
+        where: { roomId: room.id },
+        data: { role: null },
+      });
+
+      await this.persistAssignments(tx, room.id, assignments);
+
+      await tx.gameRecord.create({
+        data: {
+          roomId: room.id,
+          roles: Object.fromEntries(
+            assignments.map((a) => [a.seatNo, a.role])
+          ),
+        },
+      });
+    });
+
+    await this.redis.hset(`room:${roomCode}`, 'status', 'PLAYING');
+
+    return { assignments };
+  }
+
+  /** Shared SGS / Avalon role computation for {@link startGame} and {@link restartGame}. */
+  private computeRoleAssignments(
+    room: RoomInfo,
+    players: PlayerInfo[],
+  ): StartResult | { error: string } {
+    let assignments: RoleAssignment[];
+
+    if (room.gameType === GameType.SGS) {
+      const parseResult = SgsRoleConfigSchema.safeParse(room.roleConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: 'SGS 角色配置格式无效: ' + errorMessages };
+      }
+      const sgsConfig = parseResult.data;
+      assignments = assignSgsRoles(
+        players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
+        sgsConfig,
+      );
+    } else {
+      const parseResult = roleConfigSchema.safeParse(room.roleConfig);
+      if (!parseResult.success) {
+        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+        return { error: '角色配置格式无效: ' + errorMessages };
+      }
+      const config = parseResult.data;
+      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+        + config.loyalServants + config.minions;
+      if (totalRoles !== players.length) {
+        return { error: `角色总数(${totalRoles})与玩家数(${players.length})不匹配` };
+      }
+      assignments = assignRoles(
+        players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
+        config,
+      );
+    }
+
+    return { assignments };
+  }
+
+  private async persistAssignments(
+    tx: Prisma.TransactionClient,
+    roomId: string,
+    assignments: RoleAssignment[],
+  ): Promise<void> {
+    for (const assignment of assignments) {
+      await tx.roomPlayer.updateMany({
+        where: { roomId, userId: assignment.userId },
+        data: { role: assignment.role },
+      });
+    }
   }
 
   async getUserRooms(userId: string): Promise<string[]> {
@@ -360,7 +477,7 @@ export class RoomService {
   async updateRoomSettings(
     roomCode: string,
     hostId: string,
-    data: { maxPlayers?: number; roleConfig?: PartialRoleConfig },
+    data: { maxPlayers?: number; roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig> },
   ): Promise<RoomInfo | { error: string }> {
     const room = await this.getRoom(roomCode);
     if (!room) {
@@ -373,7 +490,7 @@ export class RoomService {
       return { error: '游戏已开始，无法修改设置' };
     }
 
-    const updates: Partial<{ maxPlayers: number; roleConfig: RoleConfig }> = {};
+    const updates: Partial<{ maxPlayers: number; roleConfig: RoleConfig | SgsRoleConfig }> = {};
 
     if (typeof data.maxPlayers !== 'undefined') {
       const playerCount = await this.getPlayerCount(roomCode);
@@ -387,37 +504,61 @@ export class RoomService {
       // If maxPlayers changes without an explicit roleConfig, auto-replace with
       // the default config for the new player count to prevent mismatches at game start
       if (typeof data.roleConfig === 'undefined') {
-        const newConfig = getDefaultConfig(data.maxPlayers);
-        const totalRoles = (newConfig.merlin ? 1 : 0) + (newConfig.percival ? 1 : 0)
-          + (newConfig.mordred ? 1 : 0) + (newConfig.morgana ? 1 : 0)
-          + (newConfig.oberon ? 1 : 0) + (newConfig.assassin ? 1 : 0)
-          + newConfig.loyalServants + newConfig.minions;
-        if (totalRoles !== data.maxPlayers) {
-          return { error: `默认角色总数(${totalRoles})与房间人数(${data.maxPlayers})不匹配` };
+        if (room.gameType === GameType.SGS) {
+          const newConfig = getSgsDefaultConfig(data.maxPlayers);
+          const totalRoles = newConfig.monarch + newConfig.loyalist + newConfig.rebel + newConfig.traitor;
+          if (totalRoles !== data.maxPlayers) {
+            return { error: `默认角色总数(${totalRoles})与房间人数(${data.maxPlayers})不匹配` };
+          }
+          updates.roleConfig = newConfig;
+        } else {
+          const newConfig = getDefaultConfig(data.maxPlayers);
+          const totalRoles = (newConfig.merlin ? 1 : 0) + (newConfig.percival ? 1 : 0)
+            + (newConfig.mordred ? 1 : 0) + (newConfig.morgana ? 1 : 0)
+            + (newConfig.oberon ? 1 : 0) + (newConfig.assassin ? 1 : 0)
+            + newConfig.loyalServants + newConfig.minions;
+          if (totalRoles !== data.maxPlayers) {
+            return { error: `默认角色总数(${totalRoles})与房间人数(${data.maxPlayers})不匹配` };
+          }
+          updates.roleConfig = newConfig;
         }
-        updates.roleConfig = newConfig;
       }
     }
 
     if (typeof data.roleConfig !== 'undefined') {
-      // Merge partial roleConfig with current room config so unspecified fields
-      // retain their existing values instead of being reset to Zod defaults.
-      const mergedConfig = { ...room.roleConfig, ...data.roleConfig };
-      const parseResult = roleConfigSchema.safeParse(mergedConfig);
-      if (!parseResult.success) {
-        const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
-        return { error: '角色配置格式无效: ' + errorMessages };
-      }
-      const config = parseResult.data;
-      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
-        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
-        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
-        + config.loyalServants + config.minions;
       const targetMax = updates.maxPlayers ?? room.maxPlayers;
-      if (totalRoles !== targetMax) {
-        return { error: `角色总数(${totalRoles})与房间人数(${targetMax})不匹配` };
+      if (room.gameType === GameType.SGS) {
+        const mergedConfig = { ...room.roleConfig, ...data.roleConfig };
+        const parseResult = SgsRoleConfigSchema.safeParse(mergedConfig);
+        if (!parseResult.success) {
+          const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+          return { error: 'SGS 角色配置格式无效: ' + errorMessages };
+        }
+        const config = parseResult.data;
+        const totalRoles = config.monarch + config.loyalist + config.rebel + config.traitor;
+        if (totalRoles !== targetMax) {
+          return { error: `角色总数(${totalRoles})与房间人数(${targetMax})不匹配` };
+        }
+        updates.roleConfig = config;
+      } else {
+        // Merge partial roleConfig with current room config so unspecified fields
+        // retain their existing values instead of being reset to Zod defaults.
+        const mergedConfig = { ...room.roleConfig, ...data.roleConfig };
+        const parseResult = roleConfigSchema.safeParse(mergedConfig);
+        if (!parseResult.success) {
+          const errorMessages = parseResult.error.issues.map(i => i.message).join(', ');
+          return { error: '角色配置格式无效: ' + errorMessages };
+        }
+        const config = parseResult.data;
+        const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
+          + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
+          + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
+          + config.loyalServants + config.minions;
+        if (totalRoles !== targetMax) {
+          return { error: `角色总数(${totalRoles})与房间人数(${targetMax})不匹配` };
+        }
+        updates.roleConfig = config;
       }
-      updates.roleConfig = config;
     }
 
     // If nothing to update, return current room info

@@ -9,6 +9,7 @@ import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { RoomGateway } from './room.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { PartialRoleConfig } from './role-config.schema';
+import { GameType } from '../../prisma/generated/prisma/client.js';
 
 describe('RoomController', () => {
   let controller: RoomController;
@@ -20,6 +21,7 @@ describe('RoomController', () => {
     code: 'ABC123',
     hostId: 'user-1',
     status: 'WAITING',
+    gameType: GameType.AVALON,
     roleConfig: {
       merlin: true,
       percival: false,
@@ -60,11 +62,14 @@ describe('RoomController', () => {
       kickPlayer: jest.fn(),
       getPlayer: jest.fn(),
       getPlayerCount: jest.fn(),
+      restartGame: jest.fn(),
     };
     const mockGateway = {
       broadcastRoomState: jest.fn(),
       evictUserFromRoom: jest.fn(),
       notifyClientsAfterKick: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterStart: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterRestart: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -175,11 +180,13 @@ describe('RoomController', () => {
         'user-1',
         { merlin: true, loyalServants: 3, minions: 2 },
         8,
+        undefined,
       );
       expect(result).toEqual({
         id: 'room-1',
         code: 'ABC123',
         status: 'WAITING',
+        gameType: 'AVALON',
         roleConfig: mockRoom.roleConfig,
         maxPlayers: 8,
         createdAt: mockRoom.createdAt,
@@ -243,6 +250,44 @@ describe('RoomController', () => {
         controller.kickPlayer(mockReq, 'abc123', { userId: 'user-2' }),
       ).rejects.toThrow(BadRequestException);
       expect(roomGateway.notifyClientsAfterKick).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /rooms/:code/restart', () => {
+    it('host restarts game successfully → 200 success', async () => {
+      const mockAssignments = [
+        { seatNo: 1, userId: 'user-1', role: '主公', team: 'good' as const },
+      ];
+      roomService.restartGame.mockResolvedValue({ assignments: mockAssignments });
+
+      const result = await controller.restartGame(mockReq, 'abc123');
+
+      expect(roomService.restartGame).toHaveBeenCalledWith('ABC123', 'user-1');
+      expect(roomGateway.notifyClientsAfterRestart).toHaveBeenCalledWith('ABC123', mockAssignments);
+      expect(result).toEqual({ success: true });
+    });
+
+    it('service error → 400 BadRequestException', async () => {
+      roomService.restartGame.mockResolvedValue({ error: '游戏尚未开始' });
+
+      await expect(controller.restartGame(mockReq, 'abc123')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('POST /rooms/:code/start', () => {
+    it('host starts game successfully → 200 success', async () => {
+      const mockAssignments = [
+        { seatNo: 1, userId: 'user-1', role: '梅林', team: 'good' as const },
+      ];
+      roomService.startGame.mockResolvedValue({ assignments: mockAssignments });
+
+      const result = await controller.startGame(mockReq, 'abc123');
+
+      expect(roomService.startGame).toHaveBeenCalledWith('ABC123', 'user-1');
+      expect(roomGateway.notifyClientsAfterStart).toHaveBeenCalledWith('ABC123', mockAssignments);
+      expect(result).toEqual({ success: true });
     });
   });
 });
