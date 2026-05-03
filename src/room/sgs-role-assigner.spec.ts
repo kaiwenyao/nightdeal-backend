@@ -11,7 +11,7 @@ describe('SgsRoleAssigner', () => {
     });
 
     it('should return correct config for 4 players', () => {
-      expect(getSgsDefaultConfig(4)).toEqual({ monarch: 0, loyalist: 2, rebel: 2, traitor: 0 });
+      expect(getSgsDefaultConfig(4)).toEqual({ monarch: 1, loyalist: 1, rebel: 2, traitor: 0 });
     });
 
     it('should return correct config for 5 players', () => {
@@ -78,7 +78,8 @@ describe('SgsRoleAssigner', () => {
       const result = assignSgsRoles(players);
 
       expect(result).toHaveLength(4);
-      expect(result.filter(r => r.role === '忠臣')).toHaveLength(2);
+      expect(result.filter(r => r.role === '主公')).toHaveLength(1);
+      expect(result.filter(r => r.role === '忠臣')).toHaveLength(1);
       expect(result.filter(r => r.role === '反贼')).toHaveLength(2);
     });
 
