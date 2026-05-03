@@ -68,6 +68,7 @@ describe('RoomController', () => {
       broadcastRoomState: jest.fn(),
       evictUserFromRoom: jest.fn(),
       notifyClientsAfterKick: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterStart: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterRestart: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
@@ -253,7 +254,7 @@ describe('RoomController', () => {
   });
 
   describe('POST /rooms/:code/restart', () => {
-    it('host restarts game successfully → 200 with assignments', async () => {
+    it('host restarts game successfully → 200 success', async () => {
       const mockAssignments = [
         { seatNo: 1, userId: 'user-1', role: '主公', team: 'good' as const },
       ];
@@ -263,7 +264,7 @@ describe('RoomController', () => {
 
       expect(roomService.restartGame).toHaveBeenCalledWith('ABC123', 'user-1');
       expect(roomGateway.notifyClientsAfterRestart).toHaveBeenCalledWith('ABC123', mockAssignments);
-      expect(result).toEqual({ assignments: mockAssignments });
+      expect(result).toEqual({ success: true });
     });
 
     it('service error → 400 BadRequestException', async () => {
@@ -272,6 +273,21 @@ describe('RoomController', () => {
       await expect(controller.restartGame(mockReq, 'abc123')).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  describe('POST /rooms/:code/start', () => {
+    it('host starts game successfully → 200 success', async () => {
+      const mockAssignments = [
+        { seatNo: 1, userId: 'user-1', role: '梅林', team: 'good' as const },
+      ];
+      roomService.startGame.mockResolvedValue({ assignments: mockAssignments });
+
+      const result = await controller.startGame(mockReq, 'abc123');
+
+      expect(roomService.startGame).toHaveBeenCalledWith('ABC123', 'user-1');
+      expect(roomGateway.notifyClientsAfterStart).toHaveBeenCalledWith('ABC123', mockAssignments);
+      expect(result).toEqual({ success: true });
     });
   });
 });

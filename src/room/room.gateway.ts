@@ -167,6 +167,24 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.broadcastRoomState(roomCode);
   }
 
+  /** After start succeeds (WebSocket or HTTP): per-player roles + full room state. */
+  async notifyClientsAfterStart(
+    roomCode: string,
+    assignments: { userId: string; role: string }[],
+  ): Promise<void> {
+    for (const assignment of assignments) {
+      const socketIds = this.userSocketMap.get(assignment.userId);
+      if (socketIds) {
+        for (const socketId of socketIds) {
+          const target = this.server.sockets.get(socketId);
+          target?.emit('room:started', { yourRole: assignment.role });
+        }
+      }
+    }
+
+    await this.broadcastRoomState(roomCode);
+  }
+
   /**
    * After DB kick succeeds (via WebSocket or HTTP): notify kicked sockets,
    * broadcast player-left + room state to remaining clients.
@@ -245,15 +263,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    for (const assignment of result.assignments) {
-      const socketIds = this.userSocketMap.get(assignment.userId);
-      if (socketIds) {
-        for (const socketId of socketIds) {
-          const target = this.server.sockets.get(socketId);
-          target?.emit('room:started', { yourRole: assignment.role });
-        }
-      }
-    }
+    await this.notifyClientsAfterStart(payload.roomCode, result.assignments);
   }
 
   @SubscribeMessage('room:restart')

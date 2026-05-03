@@ -103,7 +103,8 @@ export class RoomController {
     if ('error' in result) {
       throw new BadRequestException(result.error);
     }
-    return result;
+    await this.roomGateway.notifyClientsAfterStart(code, result.assignments);
+    return { success: true };
   }
 
   @Post(':code/restart')
@@ -117,7 +118,7 @@ export class RoomController {
       throw new BadRequestException(result.error);
     }
     await this.roomGateway.notifyClientsAfterRestart(code, result.assignments);
-    return result;
+    return { success: true };
   }
 
   @Post(':code/kick')

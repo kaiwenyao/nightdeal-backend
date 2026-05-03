@@ -310,4 +310,26 @@ describe('RoomGateway', () => {
       expect(mockServer.emit).not.toHaveBeenCalled();
     });
   });
+
+  describe('handleStart', () => {
+    it('success → emits room:started to assignees and room:state', async () => {
+      const mockAssignments = [
+        { seatNo: 1, userId: 'user-2', role: '梅林', team: 'good' as const },
+      ];
+      roomService.startGame.mockResolvedValue({ assignments: mockAssignments });
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      mockServer.sockets.set('socket-1', mockClient);
+      (gateway as any).userSocketMap.set('user-2', new Set(['socket-1']));
+
+      await gateway.handleStart(mockClient, { roomCode: 'ABC123' });
+
+      expect(roomService.startGame).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(mockClient.emit).toHaveBeenCalledWith('room:started', { yourRole: '梅林' });
+      expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
+        room: mockRoom,
+        players: mockPlayers,
+      });
+    });
+  });
 });

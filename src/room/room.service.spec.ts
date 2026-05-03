@@ -3,6 +3,7 @@ import { RoomService } from './room.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { PartialRoleConfig } from './role-config.schema';
+import { GameType } from '../../prisma/generated/prisma/client.js';
 
 describe('RoomService', () => {
   let service: RoomService;
@@ -125,6 +126,7 @@ describe('RoomService', () => {
       code: 'ABCDEF',
       hostId: 'host-1',
       status: 'WAITING',
+      gameType: GameType.AVALON,
       roleConfig: { merlin: true, percival: false, mordred: false, morgana: false, oberon: false, assassin: false, loyalServants: 4, minions: 0 },
       maxPlayers: 8,
       createdAt: new Date(),
@@ -242,6 +244,27 @@ describe('RoomService', () => {
       expect(result).toHaveProperty('code', 'ABCDEF');
       expect(mockPrisma.room.update).not.toHaveBeenCalled();
     });
+
+    it('accepts valid SGS roleConfig for SGS room', async () => {
+      const sgsRoom = {
+        ...mockRoom,
+        gameType: GameType.SGS,
+        roleConfig: { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 },
+        maxPlayers: 5,
+      };
+      const newSgsConfig = { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 };
+      mockPrisma.room.findUnique
+        .mockResolvedValueOnce(sgsRoom)
+        .mockResolvedValueOnce({ ...sgsRoom, roleConfig: newSgsConfig });
+      mockPrisma.room.update.mockResolvedValue({ ...sgsRoom, roleConfig: newSgsConfig });
+
+      const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
+        roleConfig: newSgsConfig,
+      });
+
+      expect('error' in result).toBe(false);
+      expect(mockPrisma.room.update).toHaveBeenCalled();
+    });
   });
 
   describe('leaveRoom', () => {
@@ -276,7 +299,7 @@ describe('RoomService', () => {
       code: 'ABCDEF',
       hostId: 'host-1',
       status: 'PLAYING' as const,
-      gameType: 'SGS' as const,
+      gameType: GameType.SGS,
       roleConfig: { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 },
       maxPlayers: 5,
       createdAt: new Date(),
@@ -288,7 +311,7 @@ describe('RoomService', () => {
       code: 'ABCDEF',
       hostId: 'host-1',
       status: 'PLAYING' as const,
-      gameType: 'AVALON' as const,
+      gameType: GameType.AVALON,
       roleConfig: { merlin: true, percival: false, mordred: false, morgana: false, oberon: false, assassin: true, loyalServants: 2, minions: 1 },
       maxPlayers: 5,
       createdAt: new Date(),
@@ -319,6 +342,10 @@ describe('RoomService', () => {
         expect(result.assignments.map(a => a.role)).toContain('反贼');
       }
       expect(mockPrisma.gameRecord.create).toHaveBeenCalled();
+      expect(mockPrisma.roomPlayer.updateMany).toHaveBeenCalledWith({
+        where: { roomId: 'room-1' },
+        data: { role: null },
+      });
     });
 
     it('Avalon room → returns role assignments', async () => {
@@ -333,6 +360,10 @@ describe('RoomService', () => {
         expect(result.assignments).toHaveLength(5);
       }
       expect(mockPrisma.gameRecord.create).toHaveBeenCalled();
+      expect(mockPrisma.roomPlayer.updateMany).toHaveBeenCalledWith({
+        where: { roomId: 'room-1' },
+        data: { role: null },
+      });
     });
 
     it('non-existent room → returns error', async () => {
@@ -366,6 +397,19 @@ describe('RoomService', () => {
       const result = await service.restartGame('ABCDEF', 'host-1');
 
       expect(result).toEqual({ error: '至少需要 5 名玩家' });
+    });
+
+    it('invalid SGS roleConfig in room → returns friendly error', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue({
+        ...mockSgsRoom,
+        roleConfig: { monarch: 0, loyalist: 1, rebel: 2, traitor: 1 },
+      });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(mockPlayers);
+
+      const result = await service.restartGame('ABCDEF', 'host-1');
+
+      expect(result).toHaveProperty('error');
+      expect((result as { error: string }).error).toContain('SGS 角色配置格式无效');
     });
   });
 });

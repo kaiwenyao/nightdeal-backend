@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
 import { GameType } from '../../../prisma/generated/prisma/client.js';
 import { PartialRoleConfig } from '../role-config.schema';
+import { SgsRoleConfig } from '../sgs-role-assigner';
 
 export class JoinRoomDto {
   @IsString()
@@ -42,7 +43,7 @@ export class CreateRoomDto {
   gameType?: GameType;
 
   @IsOptional()
-  roleConfig?: PartialRoleConfig;
+  roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>;
 
   @IsOptional()
   @Type(() => Number)
@@ -73,7 +74,7 @@ export class UpdateRoomSettingsDto {
   maxPlayers?: number;
 
   @IsOptional()
-  roleConfig?: PartialRoleConfig;
+  roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>;
 }
 
 // WebSocket payload for updating room settings
@@ -91,5 +92,5 @@ export class SettingsUpdateDto {
   maxPlayers?: number;
 
   @IsOptional()
-  roleConfig?: PartialRoleConfig;
+  roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>;
 }
