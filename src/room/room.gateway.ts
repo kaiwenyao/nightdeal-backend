@@ -6,6 +6,7 @@ import { AuthService } from '../auth/auth.service';
 import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto, SettingsUpdateDto } from './dto';
 import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
+import { WsErrorCode } from '../common/constants/ws-error-codes';
 
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -38,13 +39,13 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       (typeof queryToken === 'string' && queryToken.trim()) ||
       undefined;
     if (!token) {
-      client.emit('room:error', { message: '未登录' });
+      client.emit('room:error', { code: WsErrorCode.UNAUTHORIZED, message: '未登录' });
       client.disconnect();
       return;
     }
     const userId = await this.authService.verifyToken(token);
     if (!userId) {
-      client.emit('room:error', { message: '登录态失效' });
+      client.emit('room:error', { code: WsErrorCode.TOKEN_EXPIRED, message: '登录态失效' });
       client.disconnect();
       return;
     }
@@ -63,12 +64,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const room = await this.roomService.getRoom(payload.roomCode);
     if (!room) {
-      client.emit('room:error', { message: '房间不存在' });
+      client.emit('room:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '房间不存在' });
       return;
     }
 
     if (room.status === 'FINISHED') {
-      client.emit('room:error', { message: '房间已结束' });
+      client.emit('room:error', { code: WsErrorCode.ROOM_FINISHED, message: '房间已结束' });
       return;
     }
 
@@ -195,7 +196,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       for (const targetSocketId of targetSocketIds) {
         const targetSocket = this.server.sockets.get(targetSocketId);
         if (targetSocket) {
-          targetSocket.emit('room:error', { message: '你已被房主踢出房间' });
+          targetSocket.emit('room:error', {
+            code: 'KICKED',
+            message: '你已被房主踢出房间',
+          });
           targetSocket.leave(roomCode);
         }
       }
