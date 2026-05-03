@@ -142,30 +142,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  /** After restart succeeds (WebSocket or HTTP): payload, per-player roles, full room state. */
-  async notifyClientsAfterRestart(
-    roomCode: string,
-    assignments: { userId: string; role: string }[],
-  ): Promise<void> {
-    const room = await this.roomService.getRoom(roomCode);
-    if (room) {
-      this.server.to(roomCode).emit('room:restarted', {
-        gameType: room.gameType,
-        roleConfig: room.roleConfig,
-      });
-    }
-
-    for (const assignment of assignments) {
-      const socketIds = this.userSocketMap.get(assignment.userId);
-      if (socketIds) {
-        for (const socketId of socketIds) {
-          const target = this.server.sockets.get(socketId);
-          target?.emit('room:started', { yourRole: assignment.role });
-        }
-      }
-    }
-
+  /** After host ends game (WebSocket or HTTP): full room state then room:ended. */
+  async notifyClientsAfterEnd(roomCode: string): Promise<void> {
     await this.broadcastRoomState(roomCode);
+    this.server.to(roomCode).emit('room:ended', { status: 'WAITING' });
   }
 
   /** After start succeeds (WebSocket or HTTP): per-player roles + full room state. */
@@ -270,20 +250,20 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.notifyClientsAfterStart(payload.roomCode, result.assignments);
   }
 
-  @SubscribeMessage('room:restart')
-  async handleRestart(
+  @SubscribeMessage('room:end')
+  async handleEnd(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartGameDto,
   ) {
     const userId = client.data.userId;
-    const result = await this.roomService.restartGame(payload.roomCode, userId);
+    const result = await this.roomService.endGame(payload.roomCode, userId);
 
     if ('error' in result) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
-    await this.notifyClientsAfterRestart(payload.roomCode, result.assignments);
+    await this.notifyClientsAfterEnd(payload.roomCode);
   }
 
   @SubscribeMessage('room:settings-update')

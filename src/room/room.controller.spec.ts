@@ -62,14 +62,14 @@ describe('RoomController', () => {
       kickPlayer: jest.fn(),
       getPlayer: jest.fn(),
       getPlayerCount: jest.fn(),
-      restartGame: jest.fn(),
+      endGame: jest.fn(),
     };
     const mockGateway = {
       broadcastRoomState: jest.fn(),
       evictUserFromRoom: jest.fn(),
       notifyClientsAfterKick: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterStart: jest.fn().mockResolvedValue(undefined),
-      notifyClientsAfterRestart: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterEnd: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -253,24 +253,21 @@ describe('RoomController', () => {
     });
   });
 
-  describe('POST /rooms/:code/restart', () => {
-    it('host restarts game successfully → 200 success', async () => {
-      const mockAssignments = [
-        { seatNo: 1, userId: 'user-1', role: '主公', team: 'good' as const },
-      ];
-      roomService.restartGame.mockResolvedValue({ assignments: mockAssignments });
+  describe('POST /rooms/:code/end', () => {
+    it('host ends game successfully → 200 success', async () => {
+      roomService.endGame.mockResolvedValue({ success: true });
 
-      const result = await controller.restartGame(mockReq, 'abc123');
+      const result = await controller.endGame(mockReq, 'abc123');
 
-      expect(roomService.restartGame).toHaveBeenCalledWith('ABC123', 'user-1');
-      expect(roomGateway.notifyClientsAfterRestart).toHaveBeenCalledWith('ABC123', mockAssignments);
+      expect(roomService.endGame).toHaveBeenCalledWith('ABC123', 'user-1');
+      expect(roomGateway.notifyClientsAfterEnd).toHaveBeenCalledWith('ABC123');
       expect(result).toEqual({ success: true });
     });
 
     it('service error → 400 BadRequestException', async () => {
-      roomService.restartGame.mockResolvedValue({ error: '游戏尚未开始' });
+      roomService.endGame.mockResolvedValue({ error: '游戏尚未开始' });
 
-      await expect(controller.restartGame(mockReq, 'abc123')).rejects.toThrow(
+      await expect(controller.endGame(mockReq, 'abc123')).rejects.toThrow(
         BadRequestException,
       );
     });

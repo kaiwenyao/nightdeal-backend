@@ -107,17 +107,17 @@ export class RoomController {
     return { success: true };
   }
 
-  @Post(':code/restart')
+  @Post(':code/end')
   @ApiBearerAuth()
-  @ApiOperation({ summary: '重开游戏', description: '房主重新发牌，房间不解散' })
+  @ApiOperation({ summary: '结束游戏', description: '房主结束本局，房间回到等待开始' })
   @UseGuards(AuthGuard)
-  async restartGame(@Request() req: any, @Param('code') raw: string) {
+  async endGame(@Request() req: any, @Param('code') raw: string) {
     const code = raw.toUpperCase();
-    const result = await this.roomService.restartGame(code, req.user.id);
+    const result = await this.roomService.endGame(code, req.user.id);
     if ('error' in result) {
       throw new BadRequestException(result.error);
     }
-    await this.roomGateway.notifyClientsAfterRestart(code, result.assignments);
+    await this.roomGateway.notifyClientsAfterEnd(code);
     return { success: true };
   }
 

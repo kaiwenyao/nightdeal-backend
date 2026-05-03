@@ -79,7 +79,7 @@ describe('RoomGateway', () => {
       updateRoomSettings: jest.fn(),
       kickPlayer: jest.fn(),
       startGame: jest.fn(),
-      restartGame: jest.fn(),
+      endGame: jest.fn(),
       getUserRooms: jest.fn(),
       updatePlayerInfo: jest.fn(),
     };
@@ -273,37 +273,27 @@ describe('RoomGateway', () => {
     });
   });
 
-  describe('handleRestart', () => {
-    it('success → emits room:restarted (with room snapshot), room:state', async () => {
-      const mockAssignments = [
-        { seatNo: 1, userId: 'user-1', role: '主公', team: 'good' as const },
-        { seatNo: 2, userId: 'user-2', role: '忠臣', team: 'good' as const },
-      ];
-      roomService.restartGame.mockResolvedValue({ assignments: mockAssignments });
+  describe('handleEnd', () => {
+    it('success → broadcasts room:state then room:ended', async () => {
+      roomService.endGame.mockResolvedValue({ success: true });
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
+      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
 
-      await gateway.handleRestart(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleEnd(mockClient, { roomCode: 'ABC123' });
 
-      expect(roomService.restartGame).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(roomService.endGame).toHaveBeenCalledWith('ABC123', 'user-2');
+      expect(broadcastSpy).toHaveBeenCalledWith('ABC123');
       expect(mockServer.to).toHaveBeenCalledWith('ABC123');
-      expect(mockServer.emit).toHaveBeenCalledWith(
-        'room:restarted',
-        expect.objectContaining({
-          gameType: mockRoom.gameType,
-          roleConfig: mockRoom.roleConfig,
-        }),
-      );
-      expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
-        room: mockRoom,
-        players: mockPlayers,
-      });
+      expect(mockServer.emit).toHaveBeenCalledWith('room:ended', { status: 'WAITING' });
+
+      broadcastSpy.mockRestore();
     });
 
     it('error → emits room:error to client', async () => {
-      roomService.restartGame.mockResolvedValue({ error: '游戏尚未开始' });
+      roomService.endGame.mockResolvedValue({ error: '游戏尚未开始' });
 
-      await gateway.handleRestart(mockClient, { roomCode: 'ABC123' });
+      await gateway.handleEnd(mockClient, { roomCode: 'ABC123' });
 
       expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
         code: 'ROOM_ERROR',

@@ -232,6 +232,8 @@ export class RoomService {
   async joinRoom(roomCode: string, userId: string): Promise<JoinResult | { error: string }> {
     const room = await this.getRoom(roomCode);
     if (!room) return { error: '房间不存在' };
+    if (room.status === 'PLAYING') return { error: '游戏已开始，无法加入' };
+    if (room.status === 'FINISHED') return { error: '房间已结束' };
 
     const existingPlayer = await this.getPlayer(roomCode, userId);
     if (existingPlayer) return { error: '你已在房间中' };
@@ -305,6 +307,7 @@ export class RoomService {
     const room = await this.getRoom(roomCode);
     if (!room) return { error: '房间不存在' };
     if (room.hostId !== hostId) return { error: '仅房主可以踢人' };
+    if (room.status === 'PLAYING') return { error: '游戏进行中，无法踢人' };
 
     await this.prisma.roomPlayer.deleteMany({
       where: { roomId: room.id, userId: targetUserId },
@@ -355,46 +358,28 @@ export class RoomService {
     return { assignments };
   }
 
-  async restartGame(roomCode: string, hostId: string): Promise<StartResult | { error: string }> {
+  async endGame(roomCode: string, hostId: string): Promise<{ success: true } | { error: string }> {
     const room = await this.getRoom(roomCode);
     if (!room) return { error: '房间不存在' };
-    if (room.hostId !== hostId) return { error: '仅房主可以重开游戏' };
+    if (room.hostId !== hostId) return { error: '仅房主可以结束游戏' };
     if (room.status !== 'PLAYING') return { error: '游戏尚未开始' };
-
-    const players = await this.getPlayers(roomCode);
-    const minPlayers = room.gameType === GameType.SGS ? 2 : 5;
-    if (players.length < minPlayers) {
-      return { error: `至少需要 ${minPlayers} 名玩家` };
-    }
-
-    const assignmentResult = this.computeRoleAssignments(room, players);
-    if ('error' in assignmentResult) return assignmentResult;
-    const { assignments } = assignmentResult;
 
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.roomPlayer.updateMany({
         where: { roomId: room.id },
         data: { role: null },
       });
-
-      await this.persistAssignments(tx, room.id, assignments);
-
-      await tx.gameRecord.create({
-        data: {
-          roomId: room.id,
-          roles: Object.fromEntries(
-            assignments.map((a) => [a.seatNo, a.role])
-          ),
-        },
+      await tx.room.update({
+        where: { id: room.id },
+        data: { status: 'WAITING' },
       });
     });
 
-    await this.redis.hset(`room:${roomCode}`, 'status', 'PLAYING');
-
-    return { assignments };
+    await this.redis.hset(`room:${roomCode}`, 'status', 'WAITING');
+    return { success: true };
   }
 
-  /** Shared SGS / Avalon role computation for {@link startGame} and {@link restartGame}. */
+  /** Shared SGS / Avalon role computation for {@link startGame}. */
   private computeRoleAssignments(
     room: RoomInfo,
     players: PlayerInfo[],
