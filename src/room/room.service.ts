@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { GameType } from '../../prisma/generated/prisma/client.js';
+import { GameType, Prisma } from '../../prisma/generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { RoleConfig, roleConfigSchema, getDefaultConfig, PartialRoleConfig } from './role-config.schema';
@@ -16,7 +16,7 @@ export interface RoomInfo {
   code: string;
   hostId: string;
   status: string;
-  gameType: string;
+  gameType: GameType;
   roleConfig: RoleConfig;
   maxPlayers: number;
   createdAt: Date;
@@ -59,7 +59,7 @@ export class RoomService {
     if (!room) return null;
     return {
       ...room,
-      gameType: room.gameType as string,
+      gameType: room.gameType,
       roleConfig: room.roleConfig as RoleConfig,
     };
   }
@@ -133,7 +133,7 @@ export class RoomService {
     hostId: string,
     roleConfig?: PartialRoleConfig,
     maxPlayers?: number,
-    gameType: GameType | string = GameType.AVALON,
+    gameType: GameType = GameType.AVALON,
   ): Promise<RoomInfo | { error: string }> {
     const resolvedMaxPlayers = maxPlayers || 5;
     const isSgs = gameType === GameType.SGS;
@@ -163,7 +163,7 @@ export class RoomService {
 
     const code = await this.generateUniqueCode();
 
-    const room = await this.prisma.$transaction(async (tx: any) => {
+    const room = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const createdRoom = await tx.room.create({
         data: {
           code,
@@ -297,7 +297,7 @@ export class RoomService {
     if ('error' in assignmentResult) return assignmentResult;
     const { assignments } = assignmentResult;
 
-    await this.prisma.$transaction(async (tx: any) => {
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.persistAssignments(tx, room.id, assignments);
 
       await tx.room.update({
@@ -333,7 +333,7 @@ export class RoomService {
     if ('error' in assignmentResult) return assignmentResult;
     const { assignments } = assignmentResult;
 
-    await this.prisma.$transaction(async (tx: any) => {
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       for (const player of players) {
         await tx.roomPlayer.updateMany({
           where: { roomId: room.id, userId: player.userId },
@@ -353,6 +353,8 @@ export class RoomService {
       });
     });
 
+    await this.redis.hset(`room:${roomCode}`, 'status', 'PLAYING');
+
     return { assignments };
   }
 
@@ -365,16 +367,10 @@ export class RoomService {
 
     if (room.gameType === GameType.SGS) {
       const sgsConfig = room.roleConfig as unknown as SgsRoleConfig;
-      const sgsAssignments = assignSgsRoles(
+      assignments = assignSgsRoles(
         players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
         sgsConfig,
       );
-      assignments = sgsAssignments.map((a) => ({
-        seatNo: a.seatNo,
-        userId: a.userId,
-        role: a.role,
-        team: a.team as 'good' | 'evil',
-      }));
     } else {
       const parseResult = roleConfigSchema.safeParse(room.roleConfig);
       if (!parseResult.success) {
@@ -398,7 +394,11 @@ export class RoomService {
     return { assignments };
   }
 
-  private async persistAssignments(tx: any, roomId: string, assignments: RoleAssignment[]): Promise<void> {
+  private async persistAssignments(
+    tx: Prisma.TransactionClient,
+    roomId: string,
+    assignments: RoleAssignment[],
+  ): Promise<void> {
     for (const assignment of assignments) {
       await tx.roomPlayer.updateMany({
         where: { roomId, userId: assignment.userId },
@@ -473,15 +473,24 @@ export class RoomService {
       // If maxPlayers changes without an explicit roleConfig, auto-replace with
       // the default config for the new player count to prevent mismatches at game start
       if (typeof data.roleConfig === 'undefined') {
-        const newConfig = getDefaultConfig(data.maxPlayers);
-        const totalRoles = (newConfig.merlin ? 1 : 0) + (newConfig.percival ? 1 : 0)
-          + (newConfig.mordred ? 1 : 0) + (newConfig.morgana ? 1 : 0)
-          + (newConfig.oberon ? 1 : 0) + (newConfig.assassin ? 1 : 0)
-          + newConfig.loyalServants + newConfig.minions;
-        if (totalRoles !== data.maxPlayers) {
-          return { error: `默认角色总数(${totalRoles})与房间人数(${data.maxPlayers})不匹配` };
+        if (room.gameType === GameType.SGS) {
+          const newConfig = getSgsDefaultConfig(data.maxPlayers);
+          const totalRoles = newConfig.monarch + newConfig.loyalist + newConfig.rebel + newConfig.traitor;
+          if (totalRoles !== data.maxPlayers) {
+            return { error: `默认角色总数(${totalRoles})与房间人数(${data.maxPlayers})不匹配` };
+          }
+          updates.roleConfig = newConfig as unknown as RoleConfig;
+        } else {
+          const newConfig = getDefaultConfig(data.maxPlayers);
+          const totalRoles = (newConfig.merlin ? 1 : 0) + (newConfig.percival ? 1 : 0)
+            + (newConfig.mordred ? 1 : 0) + (newConfig.morgana ? 1 : 0)
+            + (newConfig.oberon ? 1 : 0) + (newConfig.assassin ? 1 : 0)
+            + newConfig.loyalServants + newConfig.minions;
+          if (totalRoles !== data.maxPlayers) {
+            return { error: `默认角色总数(${totalRoles})与房间人数(${data.maxPlayers})不匹配` };
+          }
+          updates.roleConfig = newConfig;
         }
-        updates.roleConfig = newConfig;
       }
     }
 

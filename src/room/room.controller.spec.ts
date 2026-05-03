@@ -9,6 +9,7 @@ import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { RoomGateway } from './room.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { PartialRoleConfig } from './role-config.schema';
+import { GameType } from '../../prisma/generated/prisma/client.js';
 
 describe('RoomController', () => {
   let controller: RoomController;
@@ -20,7 +21,7 @@ describe('RoomController', () => {
     code: 'ABC123',
     hostId: 'user-1',
     status: 'WAITING',
-    gameType: 'AVALON',
+    gameType: GameType.AVALON,
     roleConfig: {
       merlin: true,
       percival: false,

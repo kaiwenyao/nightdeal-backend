@@ -4,6 +4,7 @@ import { Namespace, Socket } from 'socket.io';
 import { RoomGateway } from './room.gateway';
 import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
+import { GameType } from '../../prisma/generated/prisma/client.js';
 
 describe('RoomGateway', () => {
   let gateway: RoomGateway;
@@ -17,7 +18,7 @@ describe('RoomGateway', () => {
     code: 'ABC123',
     hostId: 'user-1',
     status: 'WAITING',
-    gameType: 'AVALON',
+    gameType: GameType.AVALON,
     roleConfig: {
       merlin: true,
       percival: false,

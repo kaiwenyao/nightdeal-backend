@@ -16,7 +16,7 @@ export interface RoleAssignment {
   seatNo: number;
   userId: string;
   role: string;
-  team: 'good' | 'evil';
+  team: 'good' | 'evil' | 'monarch' | 'rebel' | 'traitor';
 }
 
 export function assignRoles(

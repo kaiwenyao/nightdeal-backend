@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsBoolean } from 'class-validator';
+import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
+import { GameType } from '../../../prisma/generated/prisma/client.js';
 import { PartialRoleConfig } from '../role-config.schema';
 
 export class JoinRoomDto {
@@ -37,8 +38,8 @@ export class KickRoomBodyDto {
 
 export class CreateRoomDto {
   @IsOptional()
-  @IsString()
-  gameType?: string;
+  @IsEnum(GameType)
+  gameType?: GameType;
 
   @IsOptional()
   roleConfig?: PartialRoleConfig;
