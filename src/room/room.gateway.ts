@@ -141,6 +141,32 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  /** After restart succeeds (WebSocket or HTTP): payload, per-player roles, full room state. */
+  async notifyClientsAfterRestart(
+    roomCode: string,
+    assignments: { userId: string; role: string }[],
+  ): Promise<void> {
+    const room = await this.roomService.getRoom(roomCode);
+    if (room) {
+      this.server.to(roomCode).emit('room:restarted', {
+        gameType: room.gameType,
+        roleConfig: room.roleConfig,
+      });
+    }
+
+    for (const assignment of assignments) {
+      const socketIds = this.userSocketMap.get(assignment.userId);
+      if (socketIds) {
+        for (const socketId of socketIds) {
+          const target = this.server.sockets.get(socketId);
+          target?.emit('room:started', { yourRole: assignment.role });
+        }
+      }
+    }
+
+    await this.broadcastRoomState(roomCode);
+  }
+
   /**
    * After DB kick succeeds (via WebSocket or HTTP): notify kicked sockets,
    * broadcast player-left + room state to remaining clients.
@@ -243,17 +269,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    this.server.to(payload.roomCode).emit('room:restarted', {});
-
-    for (const assignment of result.assignments) {
-      const socketIds = this.userSocketMap.get(assignment.userId);
-      if (socketIds) {
-        for (const socketId of socketIds) {
-          const target = this.server.sockets.get(socketId);
-          target?.emit('room:started', { yourRole: assignment.role });
-        }
-      }
-    }
+    await this.notifyClientsAfterRestart(payload.roomCode, result.assignments);
   }
 
   @SubscribeMessage('room:settings-update')

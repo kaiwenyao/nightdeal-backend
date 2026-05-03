@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 
 export const SgsRoleConfigSchema = z.object({
@@ -59,7 +60,7 @@ export function assignSgsRoles(
   }
 
   for (let i = rolePool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(0, i + 1);
     [rolePool[i], rolePool[j]] = [rolePool[j], rolePool[i]];
   }
 

@@ -272,18 +272,30 @@ describe('RoomGateway', () => {
   });
 
   describe('handleRestart', () => {
-    it('success → emits room:restarted and room:started to each player', async () => {
+    it('success → emits room:restarted (with room snapshot), room:state', async () => {
       const mockAssignments = [
         { seatNo: 1, userId: 'user-1', role: '主公', team: 'good' as const },
         { seatNo: 2, userId: 'user-2', role: '忠臣', team: 'good' as const },
       ];
       roomService.restartGame.mockResolvedValue({ assignments: mockAssignments });
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
 
       await gateway.handleRestart(mockClient, { roomCode: 'ABC123' });
 
       expect(roomService.restartGame).toHaveBeenCalledWith('ABC123', 'user-2');
       expect(mockServer.to).toHaveBeenCalledWith('ABC123');
-      expect(mockServer.emit).toHaveBeenCalledWith('room:restarted', {});
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        'room:restarted',
+        expect.objectContaining({
+          gameType: mockRoom.gameType,
+          roleConfig: mockRoom.roleConfig,
+        }),
+      );
+      expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
+        room: mockRoom,
+        players: mockPlayers,
+      });
     });
 
     it('error → emits room:error to client', async () => {

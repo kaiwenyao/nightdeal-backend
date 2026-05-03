@@ -116,6 +116,7 @@ export class RoomController {
     if ('error' in result) {
       throw new BadRequestException(result.error);
     }
+    await this.roomGateway.notifyClientsAfterRestart(code, result.assignments);
     return result;
   }
 

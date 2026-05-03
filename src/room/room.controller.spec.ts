@@ -67,6 +67,7 @@ describe('RoomController', () => {
       broadcastRoomState: jest.fn(),
       evictUserFromRoom: jest.fn(),
       notifyClientsAfterKick: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterRestart: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -260,6 +261,7 @@ describe('RoomController', () => {
       const result = await controller.restartGame(mockReq, 'abc123');
 
       expect(roomService.restartGame).toHaveBeenCalledWith('ABC123', 'user-1');
+      expect(roomGateway.notifyClientsAfterRestart).toHaveBeenCalledWith('ABC123', mockAssignments);
       expect(result).toEqual({ assignments: mockAssignments });
     });
 
