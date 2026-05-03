@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, Injectable, Logger, UnauthorizedExceptio
 import { WsException } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
 import { AuthService } from '../../auth/auth.service';
+import { WsErrorCode } from '../constants/ws-error-codes';
 
 @Injectable()
 export class WsJwtGuard implements CanActivate {
@@ -41,7 +42,7 @@ export class WsJwtGuard implements CanActivate {
   }
 
   private reject(client: Socket, message: string): void {
-    client.emit('room:error', { code: 'UNAUTHORIZED', message });
+    client.emit('room:error', { code: WsErrorCode.UNAUTHORIZED, message });
     client.disconnect(true);
   }
 }

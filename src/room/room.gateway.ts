@@ -197,7 +197,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const targetSocket = this.server.sockets.get(targetSocketId);
         if (targetSocket) {
           targetSocket.emit('room:error', {
-            code: 'KICKED',
+            code: WsErrorCode.KICKED,
             message: '你已被房主踢出房间',
           });
           targetSocket.leave(roomCode);
