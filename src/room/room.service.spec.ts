@@ -428,7 +428,7 @@ describe('RoomService', () => {
     it('invalid SGS roleConfig in room → returns friendly error', async () => {
       mockPrisma.room.findUnique.mockResolvedValue({
         ...mockSgsRoom,
-        roleConfig: { monarch: 0, loyalist: 1, rebel: 2, traitor: 1 },
+        roleConfig: { monarch: 2, loyalist: 1, rebel: 1, traitor: 1 },
       });
       mockPrisma.roomPlayer.findMany.mockResolvedValue(mockPlayers);
 
@@ -436,6 +436,25 @@ describe('RoomService', () => {
 
       expect(result).toHaveProperty('error');
       expect((result as { error: string }).error).toContain('SGS 角色配置格式无效');
+    });
+
+    it('SGS room with 4-player default config (monarch=0) → passes schema and assigns roles', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue({
+        ...mockSgsRoom,
+        roleConfig: { monarch: 0, loyalist: 2, rebel: 2, traitor: 0 },
+      });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(mockPlayers.slice(0, 4));
+      mockPrisma.roomPlayer.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.restartGame('ABCDEF', 'host-1');
+
+      expect('error' in result).toBe(false);
+      if (!('error' in result)) {
+        expect(result.assignments).toHaveLength(4);
+        expect(result.assignments.filter(a => a.role === '忠臣')).toHaveLength(2);
+        expect(result.assignments.filter(a => a.role === '反贼')).toHaveLength(2);
+      }
+      expect(mockPrisma.gameRecord.create).toHaveBeenCalled();
     });
   });
 });

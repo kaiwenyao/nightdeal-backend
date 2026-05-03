@@ -2,7 +2,7 @@ import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 
 export const SgsRoleConfigSchema = z.object({
-  monarch: z.number().int().min(1).max(1).default(1),
+  monarch: z.number().int().min(0).max(1).default(1),
   loyalist: z.number().int().min(0).max(5).default(0),
   rebel: z.number().int().min(0).max(8).default(0),
   traitor: z.number().int().min(0).max(3).default(0),
