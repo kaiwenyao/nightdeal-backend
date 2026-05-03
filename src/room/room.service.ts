@@ -145,7 +145,7 @@ export class RoomService {
     maxPlayers?: number,
     gameType: GameType = GameType.AVALON,
   ): Promise<RoomInfo | { error: string }> {
-    const resolvedMaxPlayers = maxPlayers || 5;
+    const resolvedMaxPlayers = maxPlayers || (gameType === GameType.SGS ? 2 : 5);
     const isSgs = gameType === GameType.SGS;
 
     let config: RoleConfig | SgsRoleConfig;
