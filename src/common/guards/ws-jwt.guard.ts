@@ -41,7 +41,7 @@ export class WsJwtGuard implements CanActivate {
   }
 
   private reject(client: Socket, message: string): void {
-    client.emit('room:error', { message });
+    client.emit('room:error', { code: 'UNAUTHORIZED', message });
     client.disconnect(true);
   }
 }

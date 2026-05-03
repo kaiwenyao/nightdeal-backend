@@ -96,20 +96,20 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     if (room.status === 'PLAYING') {
-      client.emit('room:error', { message: '游戏已开始，无法加入' });
+      client.emit('room:error', { code: WsErrorCode.GAME_ALREADY_STARTED, message: '游戏已开始，无法加入' });
       return;
     }
 
     const playerCount = await this.roomService.getPlayerCount(payload.roomCode);
     if (playerCount >= room.maxPlayers) {
-      client.emit('room:error', { message: '房间已满' });
+      client.emit('room:error', { code: WsErrorCode.ROOM_FULL, message: '房间已满' });
       return;
     }
 
     const result = await this.roomService.joinRoom(payload.roomCode, userId);
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -247,7 +247,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     );
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -263,7 +263,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const result = await this.roomService.startGame(payload.roomCode, userId);
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -279,7 +279,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const result = await this.roomService.restartGame(payload.roomCode, userId);
 
     if ('error' in result) {
-      client.emit('room:error', { message: result.error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
       return;
     }
 
@@ -298,7 +298,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     if (typeof result === 'object' && 'error' in result) {
-      client.emit('room:error', { message: (result as { error: string }).error });
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: (result as { error: string }).error });
       return;
     }
 

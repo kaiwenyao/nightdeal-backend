@@ -1,6 +1,7 @@
 import { Catch, Logger, ArgumentsHost } from '@nestjs/common';
 import { BaseWsExceptionFilter } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
+import { WsErrorCode } from '../constants/ws-error-codes';
 
 @Catch()
 export class WsExceptionFilter extends BaseWsExceptionFilter {
@@ -11,7 +12,7 @@ export class WsExceptionFilter extends BaseWsExceptionFilter {
     const message = this.extractMessage(exception);
 
     this.logger.warn(`WebSocket error for client ${client.id}: ${message}`);
-    client.emit('room:error', { message });
+    client.emit('room:error', { code: WsErrorCode.INTERNAL_ERROR, message });
   }
 
   private extractMessage(exception: unknown): string {
