@@ -12,7 +12,7 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('login')
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Throttle({ default: { limit: 600, ttl: 60000 } })
   @ApiOperation({ summary: '微信登录', description: '使用微信 code 登录获取 token' })
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto.code);
