@@ -293,17 +293,28 @@ export class RoomService {
       });
       if (remainingPlayers.length > 0) {
         const newHostId = remainingPlayers[0].userId;
-        await this.prisma.room.update({
-          where: { id: room.id },
-          data: { hostId: newHostId },
-        });
+        await this.prisma.$transaction([
+          this.prisma.room.update({
+            where: { id: room.id },
+            data: { hostId: newHostId },
+          }),
+          this.prisma.roomPlayer.deleteMany({
+            where: { roomId: room.id, userId },
+          }),
+        ]);
         await this.redis.hset(`room:${roomCode}`, 'hostId', newHostId);
+      } else {
+        // Last player leaving — delete the room
+        await this.prisma.room.delete({ where: { id: room.id } });
+        await this.redis.del(`room:${roomCode}`);
+        await this.redis.del(`room:${roomCode}:offline:${userId}`);
+        return;
       }
+    } else {
+      await this.prisma.roomPlayer.deleteMany({
+        where: { roomId: room.id, userId },
+      });
     }
-
-    await this.prisma.roomPlayer.deleteMany({
-      where: { roomId: room.id, userId },
-    });
 
     const playerCount = await this.getPlayerCount(roomCode);
     await this.redis.del(`room:${roomCode}:offline:${userId}`);
