@@ -284,11 +284,6 @@ export class RoomService {
     const room = await this.getRoom(roomCode);
     if (!room) return;
 
-    const player = await this.prisma.roomPlayer.findFirst({
-      where: { roomId: room.id, userId },
-    });
-    if (!player) return;
-
     // If the host is leaving, transfer host to the player with the smallest seatNo
     if (room.hostId === userId) {
       const remainingPlayers = await this.prisma.roomPlayer.findMany({

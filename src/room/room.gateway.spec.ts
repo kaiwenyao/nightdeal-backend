@@ -175,6 +175,7 @@ describe('RoomGateway', () => {
 
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayer.mockResolvedValue(null);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
       roomService.getPlayerCount
         .mockResolvedValueOnce(1)
         .mockResolvedValueOnce(2);
