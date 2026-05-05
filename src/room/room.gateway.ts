@@ -43,7 +43,14 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.disconnect();
       return;
     }
-    const userId = await this.authService.verifyToken(token);
+    let userId: string | null;
+    try {
+      userId = await this.authService.verifyToken(token);
+    } catch {
+      client.emit('room:error', { code: WsErrorCode.UNAUTHORIZED, message: '认证失败' });
+      client.disconnect();
+      return;
+    }
     if (!userId) {
       client.emit('room:error', { code: WsErrorCode.TOKEN_EXPIRED, message: '登录态失效' });
       client.disconnect();
@@ -353,9 +360,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     const players = await this.roomService.getPlayers(roomCode);
+    // Strip role from players before broadcasting — roles are delivered
+    // privately via room:started { yourRole } to prevent information leak.
+    const safePlayers = players.map(({ role, ...rest }) => rest);
     const roomSockets = this.server.adapter.rooms?.get(roomCode);
     const socketCount = roomSockets ? roomSockets.size : 0;
     this.logger.debug(`Broadcasting room:state to ${socketCount} clients in room ${roomCode}`);
-    this.server.to(roomCode).emit('room:state', { room, players });
+    this.server.to(roomCode).emit('room:state', { room, players: safePlayers });
   }
 }
