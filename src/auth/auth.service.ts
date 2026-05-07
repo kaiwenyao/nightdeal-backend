@@ -73,7 +73,7 @@ export class AuthService {
 
   async verifyToken(token: string): Promise<string | null> {
     try {
-      const payload = this.jwtService.verify(token);
+      const payload = this.jwtService.verify(token, { algorithms: ['HS256'] });
       const session = await this.redis.get(`session:${payload.sub}`);
       if (!session) return null;
       return payload.sub;
@@ -123,6 +123,6 @@ export class AuthService {
   }
 
   private generateToken(userId: string): string {
-    return this.jwtService.sign({ sub: userId });
+    return this.jwtService.sign({ sub: userId }, { algorithm: 'HS256' });
   }
 }

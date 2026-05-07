@@ -58,13 +58,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
       '50002': '微信接口错误',
     };
 
+    const isProduction = process.env.NODE_ENV === 'production';
     const defaultMessage = defaults[businessCode.toString()];
     const finalMessage = message ? (Array.isArray(message) ? message[0] : message) : defaultMessage;
 
-    response.status(status).json({
+    const responseBody: Record<string, unknown> = {
       code: businessCode,
-      message: finalMessage,
-      error: exceptionResponse,
-    });
+      message: isProduction ? defaultMessage : finalMessage,
+    };
+    if (!isProduction) {
+      responseBody.error = exceptionResponse;
+    }
+
+    response.status(status).json(responseBody);
   }
 }

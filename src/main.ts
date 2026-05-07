@@ -24,11 +24,12 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  const corsOrigin = configService.get('CORS_ORIGIN') || '*';
+  const corsOrigin = configService.get('CORS_ORIGIN');
+  const enableCredentials = configService.get('CORS_CREDENTIALS') !== 'false';
   app.enableCors({
-    origin: corsOrigin,
+    origin: corsOrigin || (enableCredentials ? [] : '*'),
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true,
+    credentials: enableCredentials,
   });
 
   app.useGlobalPipes(

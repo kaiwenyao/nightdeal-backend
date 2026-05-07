@@ -1,8 +1,9 @@
 import { Transform, Type } from 'class-transformer';
-import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
+import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum, Validate } from 'class-validator';
 import { GameType } from '../../../prisma/generated/prisma/client.js';
 import { PartialRoleConfig } from '../role-config.schema';
 import { SgsRoleConfig } from '../sgs-role-assigner';
+import { IsAvatarUrlConstraint } from '../../auth/dto/update-profile.dto';
 
 export class JoinRoomDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
@@ -67,7 +68,7 @@ export class UpdatePlayerDto {
   nickName?: string;
 
   @IsOptional()
-  @IsString()
+  @Validate(IsAvatarUrlConstraint)
   avatarUrl?: string;
 }
 

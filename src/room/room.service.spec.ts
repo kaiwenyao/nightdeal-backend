@@ -30,6 +30,7 @@ describe('RoomService', () => {
     },
     gameRecord: {
       create: jest.fn(),
+      updateMany: jest.fn(),
     },
     $transaction: jest.fn(),
   };

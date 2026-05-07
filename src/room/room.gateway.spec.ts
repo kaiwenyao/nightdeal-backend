@@ -318,7 +318,8 @@ describe('RoomGateway', () => {
       await gateway.handleStart(mockClient, { roomCode: 'ABCDEF' });
 
       expect(roomService.startGame).toHaveBeenCalledWith('ABCDEF', 'user-2');
-      expect(mockClient.emit).toHaveBeenCalledWith('room:started', { yourRole: '梅林' });
+      expect(mockServer.to).toHaveBeenCalledWith('user:user-2');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:started', { yourRole: '梅林' });
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
         room: mockRoom,
         players: mockPlayers,

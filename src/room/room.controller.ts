@@ -197,8 +197,17 @@ export class RoomController {
   @ApiBearerAuth()
   @ApiOperation({ summary: '获取房间信息', description: '根据房间码获取房间详细信息' })
   @UseGuards(AuthGuard)
-  async getRoom(@Param('code') raw: string) {
-    return this.buildRoomDetail(raw.toUpperCase());
+  async getRoom(@Request() req: any, @Param('code') raw: string) {
+    const code = raw.toUpperCase();
+    const room = await this.roomService.getRoom(code);
+    if (!room) {
+      throw new NotFoundException('房间不存在');
+    }
+    const player = await this.roomService.getPlayer(code, req.user.id);
+    if (!player && room.hostId !== req.user.id) {
+      throw new ForbiddenException('Not a member of this room');
+    }
+    return this.buildRoomDetail(code);
   }
 
   private async buildRoomDetail(code: string) {
