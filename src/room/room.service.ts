@@ -284,6 +284,11 @@ export class RoomService {
     const room = await this.getRoom(roomCode);
     if (!room) return;
 
+    if (room.status === 'PLAYING') {
+      await this.markPlayerOffline(roomCode, userId);
+      return;
+    }
+
     // If the host is leaving, transfer host to the player with the smallest seatNo
     if (room.hostId === userId) {
       const remainingPlayers = await this.prisma.roomPlayer.findMany({
@@ -390,6 +395,10 @@ export class RoomService {
       await tx.room.update({
         where: { id: room.id },
         data: { status: 'WAITING' },
+      });
+      await tx.gameRecord.updateMany({
+        where: { roomId: room.id, endedAt: null },
+        data: { endedAt: new Date() },
       });
     });
 
@@ -603,7 +612,7 @@ export class RoomService {
   async cleanupOfflinePlayers(): Promise<void> {
     this.logger.log('Running offline player cleanup...');
     const rooms = await this.prisma.room.findMany({
-      where: { status: 'WAITING' },
+      where: { status: { in: ['WAITING', 'PLAYING'] } },
       select: { code: true },
     });
 

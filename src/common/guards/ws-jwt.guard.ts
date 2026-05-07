@@ -30,13 +30,12 @@ export class WsJwtGuard implements CanActivate {
   }
 
   private extractToken(client: Socket): string | undefined {
-    const authToken = client.handshake.auth?.token;
-    const queryTokenRaw = client.handshake.query?.token;
-    const queryToken = Array.isArray(queryTokenRaw) ? queryTokenRaw[0] : queryTokenRaw;
+    const auth = (client.handshake.auth ?? {}) as { token?: string };
+    const headerToken = (client.handshake.headers?.authorization || '').replace(/^Bearer\s+/i, '');
 
     return (
-      (typeof authToken === 'string' && authToken.trim()) ||
-      (typeof queryToken === 'string' && queryToken.trim()) ||
+      (typeof auth.token === 'string' && auth.token.trim()) ||
+      headerToken ||
       undefined
     );
   }

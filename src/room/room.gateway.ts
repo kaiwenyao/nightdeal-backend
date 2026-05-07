@@ -31,12 +31,11 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   async handleConnection(client: Socket) {
-    const authToken = client.handshake.auth?.token;
-    const queryTokenRaw = client.handshake.query?.token;
-    const queryToken = Array.isArray(queryTokenRaw) ? queryTokenRaw[0] : queryTokenRaw;
+    const auth = (client.handshake.auth ?? {}) as { token?: string };
+    const headerToken = (client.handshake.headers?.authorization || '').replace(/^Bearer\s+/i, '');
     const token =
-      (typeof authToken === 'string' && authToken.trim()) ||
-      (typeof queryToken === 'string' && queryToken.trim()) ||
+      (typeof auth.token === 'string' && auth.token.trim()) ||
+      headerToken ||
       undefined;
     if (!token) {
       client.emit('room:error', { code: WsErrorCode.UNAUTHORIZED, message: '未登录' });
@@ -57,6 +56,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     client.data.userId = userId;
+    client.join('user:' + userId);
     const sockets = this.userSocketMap.get(userId) || new Set();
     sockets.add(client.id);
     this.userSocketMap.set(userId, sockets);
@@ -161,13 +161,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     assignments: { userId: string; role: string }[],
   ): Promise<void> {
     for (const assignment of assignments) {
-      const socketIds = this.userSocketMap.get(assignment.userId);
-      if (socketIds) {
-        for (const socketId of socketIds) {
-          const target = this.server.sockets.get(socketId);
-          target?.emit('room:started', { yourRole: assignment.role });
-        }
-      }
+      this.server.to('user:' + assignment.userId).emit('room:started', { yourRole: assignment.role });
     }
 
     await this.broadcastRoomState(roomCode);
@@ -334,6 +328,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
           setTimeout(async () => {
             try {
+              const room = await this.roomService.getRoom(roomCode);
+              if (room && room.status === 'PLAYING') {
+                return;
+              }
               const isOffline = await this.roomService.isPlayerOffline(roomCode, userId);
               if (isOffline) {
                 await this.roomService.leaveRoom(roomCode, userId);
