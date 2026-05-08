@@ -114,6 +114,10 @@ export class StorageService {
   // ========== 原有方法：生成 OSS 直传凭证（保留供前端直传场景使用）==========
 
   getAvatarUploadCredential(userId: string): AvatarUploadCredential {
+    this.logger.warn(
+      'Generating OSS upload credential using root access key — security risk. ' +
+        'Consider migrating to STS temporary credentials or server-side upload.',
+    );
     const accessKeyId = this.configService.get<string>('OSS_ACCESS_KEY_ID') || '';
     const accessKeySecret = this.configService.get<string>('OSS_ACCESS_KEY_SECRET') || '';
     const bucket = this.configService.get<string>('OSS_BUCKET') || '';

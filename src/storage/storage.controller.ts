@@ -25,7 +25,10 @@ export class StorageController {
     if (!userId) {
       throw new UnauthorizedException('用户信息不存在');
     }
-    this.logger.warn('Avatar upload credential endpoint is deprecated. Use POST /auth/avatar/upload instead.');
+    this.logger.warn(
+      'Deprecated OSS credential endpoint accessed. This endpoint exposes root access key and will be removed. ' +
+        'Migrate to POST /auth/avatar/upload for server-side secure upload.',
+    );
     return this.storageService.getAvatarUploadCredential(userId);
   }
 
