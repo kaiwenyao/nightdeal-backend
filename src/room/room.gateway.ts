@@ -11,7 +11,7 @@ import { WsErrorCode } from '../common/constants/ws-error-codes';
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 
 @WebSocketGateway({
-  cors: { origin: process.env.CORS_ORIGIN || '*' },
+  cors: { origin: process.env.CORS_ORIGIN || false },
   namespace: '/room',
   allowEIO3: true,
 })

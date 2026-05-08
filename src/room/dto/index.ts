@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum, Validate } from 'class-validator';
+import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum, Validate, IsNotEmpty } from 'class-validator';
 import { GameType } from '../../../prisma/generated/prisma/client.js';
 import { PartialRoleConfig } from '../role-config.schema';
 import { SgsRoleConfig } from '../sgs-role-assigner';
@@ -37,6 +37,8 @@ export class KickPlayerDto {
   roomCode: string;
 
   @IsString()
+  @IsNotEmpty()
+  @Length(1, 64)
   targetUserId: string;
 }
 
