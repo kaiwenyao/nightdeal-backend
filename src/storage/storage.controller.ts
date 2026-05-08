@@ -1,4 +1,4 @@
-import { Controller, Post, Request, UseGuards, HttpCode, UnauthorizedException, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Logger, Post, Request, UseGuards, HttpCode, UnauthorizedException, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiResponse, ApiConsumes } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -10,12 +10,14 @@ import { AvatarCredentialResponseDto } from './dto/avatar-credential-response.dt
 @ApiBearerAuth()
 @Controller('auth/avatar')
 export class StorageController {
+  private readonly logger = new Logger(StorageController.name);
+
   constructor(private readonly storageService: StorageService) {}
 
   @Post('credential')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @ApiOperation({ summary: '获取头像上传凭证' })
+  @ApiOperation({ summary: '获取头像上传凭证（已废弃，请使用 POST /auth/avatar/upload）', deprecated: true })
   @ApiResponse({ status: 200, type: AvatarCredentialResponseDto })
   @UseGuards(AuthGuard)
   async getAvatarCredential(@Request() req: any): Promise<AvatarUploadCredential> {
@@ -23,6 +25,7 @@ export class StorageController {
     if (!userId) {
       throw new UnauthorizedException('用户信息不存在');
     }
+    this.logger.warn('Avatar upload credential endpoint is deprecated. Use POST /auth/avatar/upload instead.');
     return this.storageService.getAvatarUploadCredential(userId);
   }
 
@@ -69,8 +72,8 @@ export class StorageController {
       const avatarUrl = await this.storageService.compressAndUploadAvatar(file.buffer, userId);
       return { avatarUrl };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '图片处理失败';
-      throw new BadRequestException(`头像处理失败: ${message}`);
+      this.logger.error('Avatar processing failed', error);
+      throw new BadRequestException('头像处理失败，请重试');
     }
   }
 }

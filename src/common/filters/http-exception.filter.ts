@@ -13,6 +13,18 @@ import {
 import { Response } from 'express';
 import { WeChatApiException } from '../exceptions/wechat-api.exception';
 
+function sanitizeExceptionResponse(response: unknown): unknown {
+  if (typeof response === 'string') return response;
+  if (typeof response !== 'object' || response === null) return response;
+  const obj = { ...(response as Record<string, unknown>) };
+  // Remove fields that may leak internal details
+  delete obj.stack;
+  delete obj.trace;
+  delete obj.errmsg;
+  delete obj.name;
+  return obj;
+}
+
 @Catch(HttpException)
 export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: HttpException, host: ArgumentsHost) {
@@ -67,7 +79,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message: isProduction ? defaultMessage : finalMessage,
     };
     if (!isProduction) {
-      responseBody.error = exceptionResponse;
+      responseBody.error = sanitizeExceptionResponse(exceptionResponse);
     }
 
     response.status(status).json(responseBody);

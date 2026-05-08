@@ -1,4 +1,4 @@
-import { GatewayTimeoutException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { GatewayTimeoutException, Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { createCipheriv, randomBytes } from 'crypto';
@@ -16,6 +16,7 @@ interface WeChatSessionResponse {
 @Injectable()
 export class AuthService {
   private readonly encryptionKey: Buffer;
+  private readonly logger = new Logger(AuthService.name);
 
   constructor(
     private prisma: PrismaService,
@@ -26,6 +27,15 @@ export class AuthService {
     const encryptionKeyStr = this.config.get<string>('SESSION_ENCRYPTION_KEY');
     if (!encryptionKeyStr) {
       throw new Error('SESSION_ENCRYPTION_KEY is required. Set it in environment variables.');
+    }
+    if (encryptionKeyStr.length < 32) {
+      this.logger.warn(
+        `SESSION_ENCRYPTION_KEY is ${encryptionKeyStr.length} chars (minimum 32). `
+        +
+        'Key will be padded, which reduces encryption strength. '
+        +
+        'Please update your environment configuration.',
+      );
     }
     this.encryptionKey = Buffer.from(encryptionKeyStr.padEnd(32, '0').slice(0, 32), 'utf8');
   }
@@ -120,7 +130,8 @@ export class AuthService {
     }
 
     if (data.errcode) {
-      throw new WeChatApiException(`微信登录失败: ${data.errmsg}`);
+      this.logger.warn(`WeChat login failed: errcode=${data.errcode}, errmsg=${data.errmsg}`);
+      throw new WeChatApiException('微信登录失败，请重试');
     }
 
     return { openid: data.openid, session_key: data.session_key };

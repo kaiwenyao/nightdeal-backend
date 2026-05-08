@@ -44,6 +44,8 @@ export class KickPlayerDto {
 
 export class KickRoomBodyDto {
   @IsString()
+  @IsNotEmpty({ message: 'userId 不能为空' })
+  @Length(1, 64, { message: 'userId 长度必须在1-64之间' })
   userId: string;
 }
 

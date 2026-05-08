@@ -223,6 +223,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: LeaveRoomDto,
   ) {
+    if (this.isRateLimited(client)) {
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
+      return;
+    }
     const userId = client.data.userId;
     await this.roomService.leaveRoom(payload.roomCode, userId);
 
@@ -287,6 +291,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartGameDto,
   ) {
+    if (this.isRateLimited(client)) {
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
+      return;
+    }
     const userId = client.data.userId;
     const result = await this.roomService.endGame(payload.roomCode, userId);
 
@@ -303,6 +311,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: SettingsUpdateDto,
   ) {
+    if (this.isRateLimited(client)) {
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
+      return;
+    }
     const userId = client.data.userId;
     const result = await this.roomService.updateRoomSettings(payload.roomCode, userId, {
       maxPlayers: payload.maxPlayers,
@@ -327,6 +339,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: UpdatePlayerDto,
   ) {
+    if (this.isRateLimited(client)) {
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
+      return;
+    }
     const userId = client.data.userId;
     await this.roomService.updatePlayerInfo(userId, payload);
 
