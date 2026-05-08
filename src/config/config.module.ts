@@ -14,6 +14,7 @@ import * as Joi from 'joi';
         WX_SECRET: Joi.string().required(),
         WX_LOGIN_TIMEOUT_MS: Joi.number().default(8000),
         JWT_SECRET: Joi.string().min(32).required(),
+        SESSION_ENCRYPTION_KEY: Joi.string().min(32).required(),
         OSS_ACCESS_KEY_ID: Joi.string().required(),
         OSS_ACCESS_KEY_SECRET: Joi.string().required(),
         OSS_ENDPOINT: Joi.string().required(),

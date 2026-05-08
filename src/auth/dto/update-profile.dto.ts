@@ -1,12 +1,13 @@
-import { IsString, IsOptional, Length, MaxLength, Validate, ValidationArguments, ValidatorConstraint, ValidatorConstraintInterface } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, Length, MaxLength, Validate, ValidationArguments, ValidatorConstraint, ValidatorConstraintInterface } from 'class-validator';
 
 @ValidatorConstraint({ name: 'IsAvatarUrl', async: false })
 export class IsAvatarUrlConstraint implements ValidatorConstraintInterface {
   validate(url: string, args: ValidationArguments) {
-    if (url === '') return true; // allow keeping existing value when empty
+    if (url === '') return true;
     if (!url.startsWith('https://')) return false;
-    const prefix = process.env.AVATAR_URL_PREFIX || '';
-    if (!prefix || !url.startsWith(prefix)) return false;
+    const prefix = process.env.AVATAR_URL_PREFIX;
+    if (!prefix) return false;
+    if (!url.startsWith(prefix)) return false;
     return true;
   }
   defaultMessage(args: ValidationArguments) {

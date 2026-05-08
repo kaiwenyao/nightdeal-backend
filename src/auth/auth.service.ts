@@ -1,7 +1,7 @@
 import { GatewayTimeoutException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { createCipheriv, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { WeChatApiException } from '../common/exceptions/wechat-api.exception';
@@ -23,8 +23,11 @@ export class AuthService {
     private config: ConfigService,
     private jwtService: JwtService,
   ) {
-    const secret = this.config.get<string>('JWT_SECRET') || 'default-secret-key';
-    this.encryptionKey = Buffer.from(secret.padEnd(32, '0').slice(0, 32));
+    const encryptionKeyStr = this.config.get<string>('SESSION_ENCRYPTION_KEY');
+    if (!encryptionKeyStr) {
+      throw new Error('SESSION_ENCRYPTION_KEY is required. Set it in environment variables.');
+    }
+    this.encryptionKey = Buffer.from(encryptionKeyStr.padEnd(32, '0').slice(0, 32), 'utf8');
   }
 
   async login(code: string): Promise<{ token: string; user: any }> {
@@ -83,11 +86,12 @@ export class AuthService {
   }
 
   private encrypt(text: string): string {
-    const iv = randomBytes(16);
-    const cipher = createCipheriv('aes-256-cbc', this.encryptionKey, iv);
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv);
     let encrypted = cipher.update(text, 'utf8', 'hex');
     encrypted += cipher.final('hex');
-    return iv.toString('hex') + ':' + encrypted;
+    const authTag = cipher.getAuthTag().toString('hex');
+    return iv.toString('hex') + ':' + encrypted + ':' + authTag;
   }
 
   private async code2Session(code: string): Promise<{ openid: string; session_key: string }> {
@@ -97,7 +101,7 @@ export class AuthService {
       throw new UnauthorizedException('服务端未配置有效微信密钥，请检查 WX_APPID/WX_SECRET');
     }
 
-    const url = `https://api.weixin.qq.com/sns/jscode2session?appid=${appId}&secret=${secret}&js_code=${code}&grant_type=authorization_code`;
+    const url = `https://api.weixin.qq.com/sns/jscode2session?appid=${encodeURIComponent(appId)}&secret=${encodeURIComponent(secret)}&js_code=${encodeURIComponent(code)}&grant_type=authorization_code`;
 
     const timeoutMs = this.config.get<number>('WX_LOGIN_TIMEOUT_MS') || 8000;
     const controller = new AbortController();

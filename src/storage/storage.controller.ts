@@ -33,7 +33,13 @@ export class StorageController {
   @ApiConsumes('multipart/form-data')
   @ApiResponse({ status: 200, description: '上传成功', schema: { type: 'object', properties: { avatarUrl: { type: 'string', description: 'OSS 头像 URL' } } } })
   @UseGuards(AuthGuard)
-  @UseInterceptors(FileInterceptor('avatar'))
+  @UseInterceptors(FileInterceptor('avatar', {
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req: any, file: any, cb: any) => {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      cb(null, allowed.includes(file.mimetype));
+    },
+  }))
   async uploadAvatar(
     @Request() req: any,
     @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined,
