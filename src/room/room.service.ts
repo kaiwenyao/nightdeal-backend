@@ -247,12 +247,36 @@ export class RoomService {
     const existingPlayer = await this.getPlayer(roomCode, userId);
     if (existingPlayer) return { error: '你已在房间中' };
 
-    const playerCount = await this.getPlayerCount(roomCode);
-    if (playerCount >= room.maxPlayers) return { error: '房间已满' };
+    // Use transaction to prevent race condition on maxPlayers check
+    const result = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const currentRoom = await tx.room.findUnique({ where: { id: room.id } });
+      if (!currentRoom || currentRoom.status !== 'WAITING') {
+        return { error: '房间不存在或游戏已开始' };
+      }
 
-    const playerRecord = await assignSeat(this.prisma, room.id, userId, room.maxPlayers);
+      const currentPlayerCount = await tx.roomPlayer.count({
+        where: { roomId: room.id },
+      });
+      if (currentPlayerCount >= currentRoom.maxPlayers) {
+        return { error: '房间已满' };
+      }
 
-    await this.redis.hset(`room:${roomCode}`, 'playerCount', String(playerCount + 1));
+      const existing = await tx.roomPlayer.findFirst({
+        where: { roomId: room.id, userId },
+      });
+      if (existing) {
+        return { error: '你已在房间中' };
+      }
+
+      const playerRecord = await assignSeat(this.prisma, room.id, userId, currentRoom.maxPlayers);
+      return { playerRecord };
+    });
+
+    if ('error' in result && result.error) return { error: result.error };
+    const playerRecord = result.playerRecord!;
+
+    const actualPlayerCount = await this.getPlayerCount(roomCode);
+    await this.redis.hset(`room:${roomCode}`, 'playerCount', String(actualPlayerCount));
 
     const playerUser = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -278,7 +302,7 @@ export class RoomService {
     return {
       roomState: { room, players },
       player: playerInfo,
-      playerCount: playerCount + 1,
+      playerCount: actualPlayerCount,
     };
   }
 
@@ -293,30 +317,35 @@ export class RoomService {
 
     // If the host is leaving, transfer host to the player with the smallest seatNo
     if (room.hostId === userId) {
-      const remainingPlayers = await this.prisma.roomPlayer.findMany({
-        where: { roomId: room.id, userId: { not: userId } },
-        orderBy: { seatNo: 'asc' },
-        take: 1,
-      });
-      if (remainingPlayers.length > 0) {
-        const newHostId = remainingPlayers[0].userId;
-        await this.prisma.$transaction([
-          this.prisma.room.update({
+      const result = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const remainingPlayers = await tx.roomPlayer.findMany({
+          where: { roomId: room.id, userId: { not: userId } },
+          orderBy: { seatNo: 'asc' },
+          take: 1,
+        });
+        if (remainingPlayers.length > 0) {
+          const newHostId = remainingPlayers[0].userId;
+          await tx.room.update({
             where: { id: room.id },
             data: { hostId: newHostId },
-          }),
-          this.prisma.roomPlayer.deleteMany({
+          });
+          await tx.roomPlayer.deleteMany({
             where: { roomId: room.id, userId },
-          }),
-        ]);
-        await this.redis.hset(`room:${roomCode}`, 'hostId', newHostId);
-      } else {
-        // Last player leaving — delete the room
-        await this.prisma.room.delete({ where: { id: room.id } });
+          });
+          return { newHostId };
+        } else {
+          // Last player leaving — delete the room
+          await tx.room.delete({ where: { id: room.id } });
+          return { deleted: true as const };
+        }
+      });
+
+      if ('deleted' in result && result.deleted) {
         await this.redis.del(`room:${roomCode}`);
         await this.redis.del(`room:${roomCode}:offline:${userId}`);
         return;
       }
+      await this.redis.hset(`room:${roomCode}`, 'hostId', result.newHostId);
     } else {
       await this.prisma.roomPlayer.deleteMany({
         where: { roomId: room.id, userId },
@@ -332,6 +361,7 @@ export class RoomService {
     const room = await this.getRoom(roomCode);
     if (!room) return { error: '房间不存在' };
     if (room.hostId !== hostId) return { error: '仅房主可以踢人' };
+    if (targetUserId === hostId) return { error: '房主不能踢出自己' };
     if (room.status === 'PLAYING') return { error: '游戏进行中，无法踢人' };
 
     await this.prisma.roomPlayer.deleteMany({
@@ -348,7 +378,6 @@ export class RoomService {
     const room = await this.getRoom(roomCode);
     if (!room) return { error: '房间不存在' };
     if (room.hostId !== hostId) return { error: '仅房主可以开始游戏' };
-    if (room.status !== 'WAITING') return { error: '游戏已开始' };
 
     const players = await this.getPlayers(roomCode);
     const minPlayers = room.gameType === GameType.SGS ? 2 : 5;
@@ -361,6 +390,12 @@ export class RoomService {
     const { assignments } = assignmentResult;
 
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Re-check status inside transaction to prevent race condition
+      const currentRoom = await tx.room.findUnique({ where: { id: room.id } });
+      if (!currentRoom || currentRoom.status !== 'WAITING') {
+        throw new Error('游戏已开始');
+      }
+
       await this.persistAssignments(tx, room.id, assignments);
 
       await tx.room.update({
@@ -492,8 +527,8 @@ export class RoomService {
     await this.prisma.user.update({
       where: { id: userId },
       data: {
-        ...(data.nickName && { nickName: data.nickName }),
-        ...(data.avatarUrl && { avatarUrl: data.avatarUrl }),
+        ...(data.nickName !== undefined && { nickName: data.nickName }),
+        ...(data.avatarUrl !== undefined && { avatarUrl: data.avatarUrl }),
       },
     });
   }
@@ -614,7 +649,7 @@ export class RoomService {
   async cleanupOfflinePlayers(): Promise<void> {
     this.logger.log('Running offline player cleanup...');
     const rooms = await this.prisma.room.findMany({
-      where: { status: { in: ['WAITING', 'PLAYING'] } },
+      where: { status: 'WAITING' },
       select: { code: true },
     });
 

@@ -28,7 +28,17 @@ export async function assignSeat(
         data: { roomId, userId, seatNo },
       });
     } catch (e: any) {
-      if (e.code === 'P2002') continue;
+      if (e.code === 'P2002' && e.meta?.target) {
+        const target: string[] = e.meta.target;
+        // Player already exists in this room — re-join scenario, not a seat collision
+        if (target.includes('userId')) {
+          throw new Error('你已经在房间中');
+        }
+        // Seat number collision — retry with a different seat
+        if (target.includes('seatNo')) {
+          continue;
+        }
+      }
       throw e;
     }
   }
