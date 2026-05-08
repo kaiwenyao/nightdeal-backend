@@ -47,4 +47,8 @@ export class RedisService implements OnModuleDestroy {
   async hget(key: string, field: string): Promise<string | null> {
     return this.client.hget(key, field);
   }
+
+  async expire(key: string, seconds: number): Promise<void> {
+    await this.client.expire(key, seconds);
+  }
 }

@@ -41,6 +41,7 @@ describe('RoomService', () => {
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue(undefined),
     del: jest.fn().mockResolvedValue(undefined),
+    expire: jest.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {

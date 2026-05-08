@@ -43,6 +43,7 @@ model Room {
 
   @@index([code])
   @@index([status])
+  @@index([updatedAt])
   @@map("rooms")
 }
 
@@ -72,6 +73,7 @@ model GameRecord {
 
   room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
+  @@index([roomId])
   @@map("game_records")
 }
 
