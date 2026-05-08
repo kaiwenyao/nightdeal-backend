@@ -40,6 +40,10 @@ export class RedisService implements OnModuleDestroy {
     await this.client.del(key);
   }
 
+  async incr(key: string): Promise<number> {
+    return this.client.incr(key);
+  }
+
   async hset(key: string, field: string, value: string): Promise<void> {
     await this.client.hset(key, field, value);
   }

@@ -24,7 +24,7 @@
 
 `<button open-type="chooseAvatar">` 回调里拿到的是 **临时本地文件路径**（`wxfile://tmp/...` 或 `http://tmp/...`），路径会过期、跨设备不可用，因此**不能直接写库**。
 
-采纳方案：**前端 `wx.uploadFile` 把临时文件直传阿里云 OSS（对象存储），数据库只保存 OSS 返回的 CDN URL**。我方业务服务器自始至终不持有图片字节流。
+采纳方案：**前端 `wx.uploadFile` 把临时文件上传到后端 `/auth/avatar/upload`，后端压缩后写入阿里云 OSS（对象存储），数据库只保存 OSS 返回的 CDN URL**。我方业务服务器只短暂处理图片字节流，不落盘保存原图。
 
 ### 1.3 整体时序
 
@@ -40,14 +40,10 @@
    |--- chooseAvatar (按钮点击)                                  |
    |    得到 wxfile:// 临时路径                                  |
    |                              |                              |
-   |--- POST /auth/avatar/credential ->|                         |
-   |<-- { accessKeyId, securityToken, |                          |
-   |      bucket, region, host,       |                          |
-   |      key, policy, signature }    |                          |
-   |                              |                              |
-   |--- wx.uploadFile (POST 表单) -----------------------------> |
-   |<-- 204 ----------------------------------------------------|
-   |    拼出 publicUrl = `${host}/${key}`                        |
+   |--- wx.uploadFile /auth/avatar/upload ->|                    |
+   |                              |--- compress + putObject ---> |
+   |                              |<-- OSS object key ----------- |
+   |<-- { avatarUrl } ------------|                              |
    |                              |                              |
    |--- POST /auth/update-profile ->|                            |
    |    { nickName, avatarUrl }     | 校验 url 前缀白名单         |
@@ -79,29 +75,18 @@
 
 ### 3.1 对象存储模块 `src/storage/`（新增）
 
-**目标**：对 `nightdeal-minip` 暴露一个鉴权后的端点，下发只允许往 `avatars/<userId>/...` 路径 PutObject 的一次性上传凭证。
+**目标**：对 `nightdeal-minip` 暴露一个鉴权后的头像上传端点，由后端压缩图片并写入 `avatars/<userId>/...` 路径。
 
 **选型**：阿里云 OSS。理由：
 
-- 国内可用区低延迟，小程序 `wx.uploadFile` 通过 PostObject 表单上传兼容性好。
-- RAM + STS 权限可精确收缩到单 key 前缀；PostObject Policy 可在 Policy 内进一步约束 `key 前缀`、`Content-Length`、`Content-Type`。
+- 国内可用区低延迟，小程序 `wx.uploadFile` 上传到后端后再写 OSS，兼容性好。
+- OSS AccessKey 仅保存在后端服务端环境变量中，不下发到小程序客户端。
 - 公网读 URL 形如 `https://<bucket>.oss-<region>.aliyuncs.com/avatars/<userId>/<ts>.jpg`，可直接作为 `<image src>` 使用。
-
-**两种落地方式（任选其一）**：
-
-| 方式 | 说明 | 优点 | 缺点 |
-|---|---|---|---|
-| **A. PostObject + Policy 签名（推荐）** | 后端用 AccessKey 直接签 PostObject Policy，不走 STS | 实现简单、无 STS 依赖、单次上传无需 RAM 角色配置 | AccessKey 权限范围更广，需谨慎隔离 |
-| **B. STS AssumeRole + PostObject** | 后端 `AssumeRole` 拿临时 STS 凭证，再签 Policy | 临时凭证短期有效，更安全 | 需要预先在 RAM 配置子账号 + 角色 + 信任策略 |
-
-下面以 **方式 A**（PostObject + Policy）为基础描述。若选 B，仅需把"AccessKey 签名"换成"STS 临时凭证签名"，调用面与小程序无差别。
 
 **安装依赖**：
 
 ```bash
 npm i ali-oss
-# 若选方式 B，再加：
-npm i @alicloud/sts20150401
 ```
 
 **新增文件**：
@@ -109,66 +94,26 @@ npm i @alicloud/sts20150401
 ```
 src/storage/
 ├── storage.module.ts
-├── storage.service.ts          # getAvatarUploadCredential(userId)
+├── storage.service.ts          # compressAndUploadAvatar(buffer, userId)
 ├── storage.controller.ts       # （可选）独立挂载，或直接挂在 auth.controller 下
-└── dto/
-    └── avatar-credential.dto.ts # 出参 schema
 ```
 
 **Service 接口**：
 
 ```ts
-interface AvatarUploadCredential {
-  // OSS PostObject 表单字段（前端原样塞进 wx.uploadFile.formData）
-  accessKeyId: string;        // 普通 AK 或 STS tmp AK
-  securityToken?: string;     // 仅方式 B 有值
-  policy: string;             // base64(policy json)
-  signature: string;          // hmac-sha1(policy, secretKey) base64
-  key: string;                // avatars/<userId>/<timestamp>.jpg
-  // 上传目标
-  bucket: string;
-  region: string;             // 如 oss-cn-shanghai
-  host: string;               // https://<bucket>.oss-<region>.aliyuncs.com
-  expiredTime: number;        // unix 秒
-  // 落库时使用
-  publicUrl: string;          // `${host}/${key}`
-}
-
 class StorageService {
-  async getAvatarUploadCredential(userId: string): Promise<AvatarUploadCredential>;
+  async compressAndUploadAvatar(fileBuffer: Buffer, userId: string): Promise<string>;
 }
 ```
-
-**PostObject Policy**（关键约束，base64 前的 JSON）：
-
-```jsonc
-{
-  "expiration": "2026-05-01T00:30:00.000Z",
-  "conditions": [
-    { "bucket": "<bucket>" },
-    [ "starts-with", "$key", "avatars/<userId>/" ],
-    [ "content-length-range", 0, 2097152 ],
-    [ "starts-with", "$Content-Type", "image/" ]
-  ]
-}
-```
-
-- `$key` 必须以 `avatars/<userId>/` 开头，**禁止跨用户写**。
-- `content-length-range` 限定 ≤2MB。
-- `Content-Type` 必须以 `image/` 开头，避免被传成可执行文件。
-- Policy `expiration` 建议 5–10 分钟（绝对时间）。
-- 服务端用 `secretKey` 对 base64 后的 policy 做 HMAC-SHA1，base64 输出作为 `signature`。
-
-**RAM 子账号建议**（方式 A）：单独创建一个仅有 `oss:PutObject` 到 `avatars/*` 路径权限的 RAM 子账号，AK/SK 入 `.env`，与项目主账号隔离。
 
 **端点**：
 
 | Method | Path | Guard | 说明 |
 |---|---|---|---|
-| `POST` | `/auth/avatar/credential` | `AuthGuard` | 下发一次性 OSS PostObject 凭证，前端 `wx.uploadFile` 直传 OSS |
+| `POST` | `/auth/avatar/credential` | `AuthGuard` | **已废弃**。返回 410，不再下发任何 OSS 凭证 |
 | `POST` | `/auth/avatar/upload` | `AuthGuard` | **已实现**。前端 `multipart/form-data` 上传字段 `avatar`（≤5MB，jpg/png/webp/gif），服务端用 `sharp` 压缩为 256×256 JPEG 并写入 OSS，返回 `{ avatarUrl }` |
 
-> **当前小程序端默认使用 `/auth/avatar/upload`**（见 `nightdeal-minip/pages/index/index.ts → uploadAvatarToServer`）。`/credential` 通道已实现并保留，便于将来切换为前端直传 OSS（节省服务器带宽与 CPU）。两条通道返回的 `avatarUrl` 都落在同一 `AVATAR_URL_PREFIX` 白名单下，可被 `update-profile` DTO 接受。
+> **当前小程序端使用 `/auth/avatar/upload`**（见 `nightdeal-minip/pages/index/index.ts → uploadAvatarToServer`）。`/credential` 通道已禁用，避免把 OSS AccessKey 派生签名下发到客户端。
 
 挂载位置：独立 `StorageController`（位于 `src/storage/storage.controller.ts`，挂载在 `/auth/avatar/*` 路径下，未来可扩展到房间封面等）。
 
@@ -242,17 +187,13 @@ export class UpdateProfileDto {
 新增以下变量（不要提交真实值，更新 `.env.example`）：
 
 ```env
-# 阿里云 OSS — 仅服务端使用，签 PostObject Policy 用
+# 阿里云 OSS — 仅服务端使用
 # 强烈建议用一个仅授予 oss:PutObject 到 avatars/* 路径的 RAM 子账号 AK
 OSS_ACCESS_KEY_ID=
 OSS_ACCESS_KEY_SECRET=
 OSS_BUCKET=nightdeal
 OSS_REGION=oss-cn-shanghai
 OSS_AVATAR_KEY_PREFIX=avatars/
-
-# 若选方式 B（STS），还需：
-# OSS_STS_ROLE_ARN=acs:ram::<uid>:role/<role-name>
-# OSS_STS_ROLE_SESSION_NAME=nightdeal-avatar
 
 # 入库白名单（落库前缀校验）
 AVATAR_URL_PREFIX=https://nightdeal.oss-cn-shanghai.aliyuncs.com/avatars/
@@ -265,13 +206,13 @@ WX_MSG_SEC_CHECK_ENABLED=true
 
 | 类型 | 用例 |
 |---|---|
-| Unit | `StorageService.getAvatarUploadCredential` → key 形如 `avatars/<userId>/<ts>.jpg`，policy expiration ≤10min |
-| Unit | `StorageService` → 签出的 signature 用同一 secretKey 验签可对得上（HMAC-SHA1） |
+| Unit | `StorageService.compressAndUploadAvatar` → 压缩后写入 `avatars/<userId>/<ts>.jpg` |
+| Unit | `StorageController.getAvatarCredential` → 返回 410，不下发 OSS 凭证 |
 | Unit | `IsAvatarUrl` validator → 拒 wxfile://、http://、跨域名 https |
 | Unit | `WxMsgSecCheckService` → mock fetch 返回 risky 时 throw |
 | Integration | `POST /auth/update-profile` 传 `wxfile://x` → 400 |
 | Integration | `POST /auth/update-profile` 传合规 OSS URL → 200 + DB 写入 |
-| E2E | login → credential → 真实 PostObject mock → update-profile → DB.avatarUrl 形如 `https://*.aliyuncs.com/avatars/...` |
+| E2E | login → avatar upload → update-profile → DB.avatarUrl 形如 `https://*.aliyuncs.com/avatars/...` |
 
 ---
 
@@ -291,7 +232,7 @@ WX_MSG_SEC_CHECK_ENABLED=true
 
 - ❌ 不接 `unionId`（除非未来跨小程序/公众号互认有需求）。
 - ❌ 不做手机号绑定（`getPhoneNumber`）— 与本次任务无关。
-- ❌ 不在我方业务服务器存任何头像字节流；不做 base64 入库；不做图片代理转发。
+- ❌ 不在我方业务服务器落盘保存头像原图；不做 base64 入库；不做图片代理转发。
 - ❌ 不做头像内容审核（可后续接入阿里云内容安全 / OSS 图片审核扫描）。
 - ❌ 不在小程序端硬编码任何 AccessKeySecret；签名必须由后端完成。
 
@@ -302,14 +243,14 @@ WX_MSG_SEC_CHECK_ENABLED=true
 - 微信开放社区公告 _关于小程序 wx.getUserInfo 与 wx.getUserProfile 接口调整_（restriction date 2022-10-25）
 - 微信开发者文档 / 头像昵称填写能力（基础库 ≥ 2.21.2；2.24.4 起 nickname onBlur 异步安检）
 - 微信开发者文档 / `security.msgSecCheck` v2
-- 阿里云 OSS / PostObject 表单上传 / 服务端 Policy 签名 / RAM STS（可选）
+- 阿里云 OSS / 服务端 PutObject / RAM 最小权限配置
 
 ---
 
 ## 7. 实施次序建议
 
 1. 3.4 配置先行，开通 OSS bucket（公网读、私写）、创建专用 RAM 子账号 AK 仅授予 `oss:PutObject` 到 `avatars/*`。
-2. 3.1 StorageModule（PostObject Policy 签名）— 单元测试通过；用 curl POST 一张测试图片打通链路。
+2. 3.1 StorageModule（服务端压缩 + OSS PutObject）— 单元测试通过；用 curl POST 一张测试图片打通链路。
 3. 3.2 DTO 校验 — 立即提升安全水位，可独立合并。
 4. 3.3 内容安检（可放在第二个 PR，灰度上）。
 5. 联调阶段配合前端 `nightdeal-minip/docs/wechat-auth.md` §4.1–4.2。

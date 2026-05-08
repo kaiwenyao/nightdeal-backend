@@ -970,7 +970,7 @@ nightdeal-backend/
 |------|------|------|------|
 | POST | `/api/auth/login` | 微信登录 | 否 |
 | POST | `/api/auth/update-profile` | 更新头像昵称 | 是 |
-| POST | `/api/auth/avatar/credential` | 获取阿里云 OSS PostObject 直传凭证 | 是 |
+| POST | `/api/auth/avatar/credential` | 已废弃，返回 410，不再下发 OSS 凭证 | 是 |
 | POST | `/api/auth/avatar/upload` | 服务端压缩并上传头像（multipart `avatar` 字段） | 是 |
 | POST | `/api/rooms` | 创建房间 | 是 |
 | GET | `/api/rooms/:code` | 获取房间信息 | 是 |
@@ -980,7 +980,7 @@ nightdeal-backend/
 | GET | `/api/rooms/:code/my-role` | 获取自己的角色（游戏开始后，断线重连用） | 是 |
 | GET | `/api/health` | 健康检查（DB / Redis 连通性） | 否 |
 
-> 头像上传双通道并存：`/auth/avatar/credential` 适用于小程序直传 OSS（PostObject 协议）；`/auth/avatar/upload` 适用于服务端压缩+OSS 上传，前端可二选一。当前小程序端默认使用 `/auth/avatar/upload`。
+> 头像上传统一使用 `/auth/avatar/upload`：小程序上传 multipart `avatar` 到后端，后端压缩后写入 OSS。`/auth/avatar/credential` 已废弃并返回 410，避免把 OSS 凭证签名下发到客户端。
 
 ### 6.2 WebSocket 事件
 

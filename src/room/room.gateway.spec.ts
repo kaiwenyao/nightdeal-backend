@@ -5,11 +5,13 @@ import { RoomGateway } from './room.gateway';
 import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
 import { GameType } from '../../prisma/generated/prisma/client.js';
+import { RedisService } from '../redis/redis.service';
 
 describe('RoomGateway', () => {
   let gateway: RoomGateway;
   let roomService: jest.Mocked<RoomService>;
   let authService: jest.Mocked<AuthService>;
+  let redisService: jest.Mocked<RedisService>;
   let mockServer: jest.Mocked<Namespace>;
   let mockClient: jest.Mocked<Socket>;
 
@@ -88,17 +90,24 @@ describe('RoomGateway', () => {
       verifyToken: jest.fn(),
     };
 
+    const mockRedisService = {
+      incr: jest.fn().mockResolvedValue(1),
+      expire: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RoomGateway,
         { provide: RoomService, useValue: mockRoomService },
         { provide: AuthService, useValue: mockAuthService },
+        { provide: RedisService, useValue: mockRedisService },
       ],
     }).compile();
 
     gateway = module.get<RoomGateway>(RoomGateway);
     roomService = module.get(RoomService) as jest.Mocked<RoomService>;
     authService = module.get(AuthService) as jest.Mocked<AuthService>;
+    redisService = module.get(RedisService) as jest.Mocked<RedisService>;
 
     // Inject mock server
     (gateway as any).server = mockServer;
@@ -210,6 +219,27 @@ describe('RoomGateway', () => {
         userId: 'user-2',
         playerCount: 1,
       });
+    });
+
+    it('stores rate limit state in Redis', async () => {
+      roomService.getPlayerCount.mockResolvedValue(1);
+
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(redisService.incr).toHaveBeenCalledWith('ws-rate:user:user-2');
+      expect(redisService.expire).toHaveBeenCalledWith('ws-rate:user:user-2', 1);
+    });
+
+    it('rejects socket events when the shared Redis rate limit is exceeded', async () => {
+      redisService.incr.mockResolvedValueOnce(11);
+
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '请求过于频繁，请稍后再试',
+      });
+      expect(roomService.leaveRoom).not.toHaveBeenCalled();
     });
   });
 
