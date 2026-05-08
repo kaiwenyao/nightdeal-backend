@@ -205,8 +205,8 @@ describe('RoomGateway', () => {
       await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
 
       expect(roomService.leaveRoom).toHaveBeenCalledWith('ABCDEF', 'user-2');
-      expect(mockClient.to).toHaveBeenCalledWith('ABCDEF');
-      expect(mockClient.emit).toHaveBeenCalledWith('room:player-left', {
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:player-left', {
         userId: 'user-2',
         playerCount: 1,
       });
