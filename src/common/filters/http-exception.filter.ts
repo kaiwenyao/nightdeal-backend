@@ -8,13 +8,14 @@ import {
   ForbiddenException,
   NotFoundException,
   ConflictException,
+  GoneException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { WeChatApiException } from '../exceptions/wechat-api.exception';
 
-function sanitizeExceptionResponse(response: unknown): unknown {
-  if (typeof response === 'string') return response;
+function sanitizeExceptionResponse(response: unknown, messageOverride?: string): unknown {
+  if (typeof response === 'string') return messageOverride ?? response;
   if (typeof response !== 'object' || response === null) return response;
   const obj = { ...(response as Record<string, unknown>) };
   // Remove fields that may leak internal details
@@ -22,6 +23,10 @@ function sanitizeExceptionResponse(response: unknown): unknown {
   delete obj.trace;
   delete obj.errmsg;
   delete obj.name;
+  if (messageOverride) {
+    obj.message = messageOverride;
+    delete obj.error;
+  }
   return obj;
 }
 
@@ -49,6 +54,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
       businessCode = 40401;
     } else if (exception instanceof ConflictException) {
       businessCode = 40901;
+    } else if (exception instanceof GoneException) {
+      businessCode = 41001;
     } else if (status === 429) {
       businessCode = 42901;
     } else if (exception instanceof WeChatApiException) {
@@ -65,21 +72,27 @@ export class HttpExceptionFilter implements ExceptionFilter {
       '40301': '无权限操作',
       '40401': '房间不存在',
       '40901': '已在房间中',
+      '41001': '接口已废弃',
       '42901': '请求过于频繁',
       '50001': '服务器内部错误',
-      '50002': '微信接口错误',
+      '50002': '微信服务暂时不可用，请稍后重试',
     };
 
     const isProduction = process.env.NODE_ENV === 'production';
     const defaultMessage = defaults[businessCode.toString()];
+    const isServerError = status >= 500;
     const finalMessage = message ? (Array.isArray(message) ? message[0] : message) : defaultMessage;
+    const publicMessage = isServerError ? defaultMessage : finalMessage;
 
     const responseBody: Record<string, unknown> = {
       code: businessCode,
-      message: isProduction ? defaultMessage : finalMessage,
+      message: isProduction ? defaultMessage : publicMessage,
     };
     if (!isProduction) {
-      responseBody.error = sanitizeExceptionResponse(exceptionResponse);
+      responseBody.error = sanitizeExceptionResponse(
+        exceptionResponse,
+        isServerError ? defaultMessage : undefined,
+      );
     }
 
     response.status(status).json(responseBody);

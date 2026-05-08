@@ -1,10 +1,9 @@
-import { Controller, Logger, Post, Request, UseGuards, HttpCode, UnauthorizedException, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Logger, Post, Request, UseGuards, HttpCode, UnauthorizedException, UseInterceptors, UploadedFile, BadRequestException, GoneException } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiResponse, ApiConsumes } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '../auth/auth.guard';
-import { StorageService, AvatarUploadCredential } from './storage.service';
-import { AvatarCredentialResponseDto } from './dto/avatar-credential-response.dto';
+import { StorageService } from './storage.service';
 
 @ApiTags('auth')
 @ApiBearerAuth()
@@ -15,21 +14,20 @@ export class StorageController {
   constructor(private readonly storageService: StorageService) {}
 
   @Post('credential')
-  @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: '获取头像上传凭证（已废弃，请使用 POST /auth/avatar/upload）', deprecated: true })
-  @ApiResponse({ status: 200, type: AvatarCredentialResponseDto })
+  @ApiResponse({ status: 410, description: '头像直传凭证接口已废弃，请使用 POST /auth/avatar/upload' })
   @UseGuards(AuthGuard)
-  async getAvatarCredential(@Request() req: any): Promise<AvatarUploadCredential> {
+  async getAvatarCredential(@Request() req: any): Promise<never> {
     const userId = req.user?.id;
     if (!userId) {
       throw new UnauthorizedException('用户信息不存在');
     }
     this.logger.warn(
-      'Deprecated OSS credential endpoint accessed. This endpoint exposes root access key and will be removed. ' +
-        'Migrate to POST /auth/avatar/upload for server-side secure upload.',
+      `Deprecated OSS credential endpoint accessed by user ${userId}. ` +
+        'Direct upload credentials are disabled; use POST /auth/avatar/upload.',
     );
-    return this.storageService.getAvatarUploadCredential(userId);
+    throw new GoneException('头像直传凭证接口已废弃，请使用服务端头像上传');
   }
 
   @Post('upload')

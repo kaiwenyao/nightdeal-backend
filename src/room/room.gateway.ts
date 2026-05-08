@@ -7,6 +7,7 @@ import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto
 import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 import { WsErrorCode } from '../common/constants/ws-error-codes';
+import { RedisService } from '../redis/redis.service';
 
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 const WS_RATE_LIMIT_WINDOW_MS = 1000;
@@ -26,12 +27,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private readonly logger = new Logger(RoomGateway.name);
   private userSocketMap = new Map<string, Set<string>>();
-  private socketRateLimits = new Map<string, { count: number; windowStart: number }>();
   private offlineTimeouts = new Map<string, Map<string, NodeJS.Timeout>>();
 
   constructor(
     private roomService: RoomService,
     private authService: AuthService,
+    private redis: RedisService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -64,19 +65,24 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const sockets = this.userSocketMap.get(userId) || new Set();
     sockets.add(client.id);
     this.userSocketMap.set(userId, sockets);
-    this.socketRateLimits.set(client.id, { count: 0, windowStart: Date.now() });
   }
 
-  private isRateLimited(client: Socket): boolean {
-    const limit = this.socketRateLimits.get(client.id);
-    if (!limit) return false;
-    const now = Date.now();
-    if (now - limit.windowStart >= WS_RATE_LIMIT_WINDOW_MS) {
-      limit.count = 0;
-      limit.windowStart = now;
+  private async isRateLimited(client: Socket): Promise<boolean> {
+    const subject = typeof client.data?.userId === 'string' && client.data.userId
+      ? `user:${client.data.userId}`
+      : `socket:${client.id}`;
+    const key = `ws-rate:${subject}`;
+
+    try {
+      const count = await this.redis.incr(key);
+      if (count === 1) {
+        await this.redis.expire(key, Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000));
+      }
+      return count > WS_RATE_LIMIT_MAX;
+    } catch (error) {
+      this.logger.error(`Failed to check WebSocket rate limit for ${subject}`, error);
+      return true;
     }
-    limit.count++;
-    return limit.count > WS_RATE_LIMIT_MAX;
   }
 
   @SubscribeMessage('room:join')
@@ -84,7 +90,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: JoinRoomDto,
   ) {
-    if (this.isRateLimited(client)) {
+    if (await this.isRateLimited(client)) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
       return;
     }
@@ -223,7 +229,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: LeaveRoomDto,
   ) {
-    if (this.isRateLimited(client)) {
+    if (await this.isRateLimited(client)) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
       return;
     }
@@ -247,7 +253,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: KickPlayerDto,
   ) {
-    if (this.isRateLimited(client)) {
+    if (await this.isRateLimited(client)) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
       return;
     }
@@ -271,7 +277,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartGameDto,
   ) {
-    if (this.isRateLimited(client)) {
+    if (await this.isRateLimited(client)) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
       return;
     }
@@ -291,7 +297,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartGameDto,
   ) {
-    if (this.isRateLimited(client)) {
+    if (await this.isRateLimited(client)) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
       return;
     }
@@ -311,7 +317,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: SettingsUpdateDto,
   ) {
-    if (this.isRateLimited(client)) {
+    if (await this.isRateLimited(client)) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
       return;
     }
@@ -339,7 +345,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: UpdatePlayerDto,
   ) {
-    if (this.isRateLimited(client)) {
+    if (await this.isRateLimited(client)) {
       client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁，请稍后再试' });
       return;
     }
@@ -358,7 +364,6 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleDisconnect(client: Socket) {
     const userId = client.data.userId;
-    this.socketRateLimits.delete(client.id);
     if (!userId) return;
 
     const sockets = this.userSocketMap.get(userId);
