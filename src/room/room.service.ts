@@ -221,6 +221,8 @@ export class RoomService {
     await this.redis.hset(`room:${code}`, 'hostId', hostId);
     await this.redis.hset(`room:${code}`, 'playerCount', '1');
     await this.redis.hset(`room:${code}`, 'maxPlayers', String(resolvedMaxPlayers));
+    // Set 24h TTL on room hash to prevent stale Redis keys
+    await this.redis.expire(`room:${code}`, 86400);
 
     if (isSgs) {
       return {
