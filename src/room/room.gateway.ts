@@ -11,7 +11,7 @@ import { WsErrorCode } from '../common/constants/ws-error-codes';
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 
 @WebSocketGateway({
-  cors: { origin: process.env.CORS_ORIGIN || '*' },
+  cors: { origin: process.env.CORS_ORIGIN || false },
   namespace: '/room',
   allowEIO3: true,
 })
@@ -24,6 +24,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private readonly logger = new Logger(RoomGateway.name);
   private userSocketMap = new Map<string, Set<string>>();
+  private offlineTimeouts = new Map<string, Map<string, NodeJS.Timeout>>();
 
   constructor(
     private roomService: RoomService,
@@ -86,6 +87,8 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const isOffline = await this.roomService.isPlayerOffline(payload.roomCode, userId);
       if (isOffline) {
+        // Cancel pending offline cleanup timeout since the player reconnected
+        this.clearOfflineTimeout(userId, payload.roomCode);
         await this.roomService.markPlayerOnline(payload.roomCode, userId);
         await this.broadcastRoomState(payload.roomCode);
         if (room.status === 'PLAYING' && existingPlayer.role) {
@@ -207,7 +210,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Emit player-left event to all remaining clients in the room
     const playerCount = await this.roomService.getPlayerCount(payload.roomCode);
-    client.to(payload.roomCode).emit('room:player-left', {
+    this.server.to(payload.roomCode).emit('room:player-left', {
       userId,
       playerCount,
     });
@@ -324,10 +327,11 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
         for (const roomCode of rooms) {
           await this.roomService.markPlayerOffline(roomCode, userId);
-          client.to(roomCode).emit('room:offline', { userId });
+          this.server.to(roomCode).emit('room:offline', { userId });
 
-          setTimeout(async () => {
+          const timeout = setTimeout(async () => {
             try {
+              this.clearOfflineTimeout(userId, roomCode);
               const room = await this.roomService.getRoom(roomCode);
               if (room && room.status === 'PLAYING') {
                 return;
@@ -346,7 +350,31 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
               this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
             }
           }, OFFLINE_TIMEOUT_MS);
+
+          this.setOfflineTimeout(userId, roomCode, timeout);
         }
+      }
+    }
+  }
+
+  private setOfflineTimeout(userId: string, roomCode: string, timeout: NodeJS.Timeout): void {
+    let userMap = this.offlineTimeouts.get(userId);
+    if (!userMap) {
+      userMap = new Map();
+      this.offlineTimeouts.set(userId, userMap);
+    }
+    userMap.set(roomCode, timeout);
+  }
+
+  private clearOfflineTimeout(userId: string, roomCode: string): void {
+    const userMap = this.offlineTimeouts.get(userId);
+    if (!userMap) return;
+    const timeout = userMap.get(roomCode);
+    if (timeout) {
+      clearTimeout(timeout);
+      userMap.delete(roomCode);
+      if (userMap.size === 0) {
+        this.offlineTimeouts.delete(userId);
       }
     }
   }
