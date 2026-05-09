@@ -5,7 +5,10 @@
   "overrides": {
     "babel-plugin-istanbul": "^8.0.0",
     "test-exclude": "^7.0.1",
-    "glob": "^13.0.6"
+    "glob": "^13.0.6",
+    "fast-uri": "^3.1.2",
+    "hono": "^4.12.18",
+    "@hono/node-server": "^1.19.13"
   },
   "scripts": {
     "build": "nest build",
