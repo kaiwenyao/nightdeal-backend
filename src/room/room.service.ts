@@ -511,7 +511,7 @@ export class RoomService {
   }
 
   async markPlayerOffline(roomCode: string, userId: string): Promise<void> {
-    await this.redis.set(`room:${roomCode}:offline:${userId}`, Date.now().toString(), 300);
+    await this.redis.set(`room:${roomCode}:offline:${userId}`, Date.now().toString(), 600);
   }
 
   async markPlayerOnline(roomCode: string, userId: string): Promise<void> {
