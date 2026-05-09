@@ -521,7 +521,7 @@ export class RoomService {
   }
 
   async markPlayerOffline(roomCode: string, userId: string): Promise<void> {
-    await this.redis.set(`room:${roomCode}:offline:${userId}`, Date.now().toString(), 300);
+    await this.redis.set(`room:${roomCode}:offline:${userId}`, Date.now().toString(), 3600);
   }
 
   async markPlayerOnline(roomCode: string, userId: string): Promise<void> {
@@ -694,6 +694,11 @@ export class RoomService {
     });
 
     for (const room of idleRooms) {
+      const playerCount = await this.getPlayerCount(room.code);
+      if (playerCount > 0) {
+        this.logger.log(`Skipping idle cleanup for room ${room.code}: still has ${playerCount} player(s)`);
+        continue;
+      }
       await this.prisma.roomPlayer.deleteMany({ where: { roomId: room.id } });
       await this.prisma.room.delete({ where: { id: room.id } });
       await this.redis.del(`room:${room.code}`);
