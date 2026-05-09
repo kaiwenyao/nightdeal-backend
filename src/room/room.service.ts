@@ -269,6 +269,10 @@ export class RoomService {
       }
 
       const playerRecord = await assignSeat(this.prisma, room.id, userId, currentRoom.maxPlayers);
+      await tx.room.update({
+        where: { id: room.id },
+        data: { updatedAt: new Date() },
+      });
       return { playerRecord };
     });
 
@@ -327,7 +331,7 @@ export class RoomService {
           const newHostId = remainingPlayers[0].userId;
           await tx.room.update({
             where: { id: room.id },
-            data: { hostId: newHostId },
+            data: { hostId: newHostId, updatedAt: new Date() },
           });
           await tx.roomPlayer.deleteMany({
             where: { roomId: room.id, userId },
@@ -347,8 +351,14 @@ export class RoomService {
       }
       await this.redis.hset(`room:${roomCode}`, 'hostId', result.newHostId);
     } else {
-      await this.prisma.roomPlayer.deleteMany({
-        where: { roomId: room.id, userId },
+      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await tx.roomPlayer.deleteMany({
+          where: { roomId: room.id, userId },
+        });
+        await tx.room.update({
+          where: { id: room.id },
+          data: { updatedAt: new Date() },
+        });
       });
     }
 
@@ -515,7 +525,14 @@ export class RoomService {
   }
 
   async markPlayerOnline(roomCode: string, userId: string): Promise<void> {
+    const room = await this.getRoom(roomCode);
     await this.redis.del(`room:${roomCode}:offline:${userId}`);
+    if (room) {
+      await this.prisma.room.update({
+        where: { id: room.id },
+        data: { updatedAt: new Date() },
+      });
+    }
   }
 
   async isPlayerOffline(roomCode: string, userId: string): Promise<boolean> {
