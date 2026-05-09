@@ -521,7 +521,15 @@ export class RoomService {
   }
 
   async markPlayerOffline(roomCode: string, userId: string): Promise<void> {
+    const room = await this.getRoom(roomCode);
     await this.redis.set(`room:${roomCode}:offline:${userId}`, Date.now().toString(), 3600);
+    if (room) {
+      await this.prisma.room.update({
+        where: { id: room.id },
+        data: { updatedAt: new Date() },
+      });
+      await this.redis.hset(`room:${roomCode}`, 'lastActiveAt', Date.now().toString());
+    }
   }
 
   async markPlayerOnline(roomCode: string, userId: string): Promise<void> {
@@ -532,6 +540,7 @@ export class RoomService {
         where: { id: room.id },
         data: { updatedAt: new Date() },
       });
+      await this.redis.hset(`room:${roomCode}`, 'lastActiveAt', Date.now().toString());
     }
   }
 
@@ -697,8 +706,15 @@ export class RoomService {
       const players = await this.getPlayers(room.code);
       const hasOnlinePlayer = players.some((p) => p.isOnline);
       if (hasOnlinePlayer) {
-        this.logger.log(`Skipping idle cleanup for room ${room.code}: still has online player(s)`);
-        continue;
+        // Check recent WebSocket activity (disconnect/reconnect) to distinguish
+        // genuinely active rooms from stale ones with "ghost" online players.
+        const lastActiveAtStr = await this.redis.hget(`room:${room.code}`, 'lastActiveAt');
+        const lastActiveAt = lastActiveAtStr ? parseInt(lastActiveAtStr, 10) : null;
+        if (lastActiveAt && lastActiveAt > Date.now() - 30 * 60 * 1000) {
+          this.logger.log(`Skipping idle cleanup for room ${room.code}: has online players with recent activity`);
+          continue;
+        }
+        this.logger.log(`Deleting stale room ${room.code}: has "online" players but no activity for 30min`);
       }
       await this.prisma.roomPlayer.deleteMany({ where: { roomId: room.id } });
       await this.prisma.room.delete({ where: { id: room.id } });
