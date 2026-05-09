@@ -1,61 +1,72 @@
-# NightDeal 后端
+# NightDeal Backend
 
-阿瓦隆（Avalon）桌游辅助工具后端服务。基于 NestJS + PostgreSQL + Redis 构建。
+NightDeal 后端是微信小程序游戏房间服务，当前支持 Avalon 和 SGS 两种游戏类型。服务基于 NestJS、PostgreSQL、Redis 和 Socket.IO 构建。
 
 ## 技术栈
 
-| 组件 | 技术 | 版本 |
-|------|------|------|
-| 运行时 | Node.js | 20 LTS |
-| 框架 | NestJS | 10.x |
-| 数据库 | PostgreSQL | 16 |
-| ORM | Prisma | 6.x |
-| 缓存 | Redis | 7 |
-| 容器 | Docker + Docker Compose | - |
+| 组件 | 技术 | 当前版本 |
+| --- | --- | --- |
+| Runtime | Node.js | 20+ |
+| Framework | NestJS | 11.x |
+| Database | PostgreSQL | 16 |
+| ORM | Prisma | 7.x |
+| Cache | Redis | 7 |
+| Realtime | Socket.IO | 4.x |
+| Storage | Aliyun OSS + sharp | - |
+| Test | Jest | 30.x |
 
 ## 快速开始
 
 ### 前置条件
 
-- **Node.js 20+**（推荐使用 nvm 管理版本）
-- **Docker + Docker Compose**（用于运行 PostgreSQL 和 Redis）
+- Node.js 20+
+- Docker + Docker Compose
 
-### 1. 克隆项目
-
-```bash
-git clone https://github.com/kaiwenyao/nightdeal-backend.git
-cd nightdeal-backend
-```
-
-### 2. 安装依赖
+### 1. 安装依赖
 
 ```bash
 npm install
 ```
 
-### 3. 启动数据库服务
+### 2. 启动 PostgreSQL 和 Redis
 
 ```bash
 docker compose up -d
+docker compose ps
 ```
 
-等待 PostgreSQL 和 Redis 健康检查通过：
+`postgres` 和 `redis` 都应处于 healthy 状态。
+
+### 3. 配置环境变量
 
 ```bash
-docker compose ps
-# 应看到两个服务都是 healthy 状态
+cp .env.example .env
 ```
 
-### 4. 启动开发服务器
+按本地环境修改 `.env`。最少需要配置数据库、Redis、微信、JWT、session 加密和 OSS 相关变量。
+
+### 4. 启动开发服务
 
 ```bash
 npm run start:dev
 ```
 
-首次启动时会自动执行数据库迁移（创建表结构）。服务器启动后会显示：
+`start:dev` 会先执行：
 
+```bash
+prisma migrate deploy && prisma generate
 ```
-NightDeal backend is running on: http://localhost:3000
+
+服务默认监听：
+
+```text
+http://localhost:3000
+```
+
+非生产环境 Swagger 地址：
+
+```text
+http://localhost:3000/api/docs
 ```
 
 ### 5. 验证服务
@@ -64,7 +75,7 @@ NightDeal backend is running on: http://localhost:3000
 curl http://localhost:3000/api/health
 ```
 
-预期返回：
+成功响应会经过统一包装：
 
 ```json
 {
@@ -72,7 +83,7 @@ curl http://localhost:3000/api/health
   "message": "success",
   "data": {
     "status": "ok",
-    "timestamp": "2024-01-01T00:00:00.000Z",
+    "timestamp": "2026-05-10T00:00:00.000Z",
     "services": {
       "database": "ok",
       "redis": "ok"
@@ -83,176 +94,180 @@ curl http://localhost:3000/api/health
 
 ## 环境变量
 
-项目使用 `.env` 文件管理环境变量。首次使用时请复制示例文件：
+| 变量 | 说明 |
+| --- | --- |
+| `PORT` | 服务端口 |
+| `DATABASE_URL` | PostgreSQL 连接地址 |
+| `REDIS_URL` | Redis 连接地址 |
+| `WX_APPID` | 微信小程序 AppID |
+| `WX_SECRET` | 微信小程序密钥 |
+| `WX_LOGIN_TIMEOUT_MS` | 微信登录请求超时时间 |
+| `JWT_SECRET` | JWT 签名密钥 |
+| `SESSION_ENCRYPTION_KEY` | 32 字节 AES-256-GCM session 加密密钥 |
+| `OSS_ACCESS_KEY_ID` | 阿里云 OSS AccessKey ID |
+| `OSS_ACCESS_KEY_SECRET` | 阿里云 OSS AccessKey Secret |
+| `OSS_ENDPOINT` | OSS endpoint |
+| `OSS_BUCKET` | OSS bucket |
+| `OSS_REGION` | OSS region |
+| `OSS_AVATAR_KEY_PREFIX` | 头像对象 key 前缀 |
+| `AVATAR_URL_PREFIX` | 头像公开 URL 前缀和用户头像 URL 白名单前缀 |
+| `CORS_ORIGIN` | 可选，允许的 HTTP / WebSocket 来源 |
+| `CORS_CREDENTIALS` | 可选，设置为 `false` 时关闭 HTTP credentials |
 
-```bash
-cp .env.example .env
-```
-
-### 变量说明
-
-| 变量 | 说明 | 本地开发示例 | Docker 部署示例 |
-|------|------|-------------|----------------|
-| `PORT` | 服务端口 | `3000` | `3000` |
-| `DATABASE_URL` | PostgreSQL 连接地址 | `postgresql://nightdeal:nightdeal@localhost:5432/nightdeal` | `postgresql://nightdeal:nightdeal@postgres:5432/nightdeal` |
-| `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379` | `redis://redis:6379` |
-| `WX_APPID` | 微信小程序 AppID | `***REMOVED_APPID***` | 同左 |
-| `WX_SECRET` | 微信小程序密钥 | `your_wx_secret_here` | 从密钥管理服务获取 |
-| `JWT_SECRET` | JWT 签名密钥（至少 32 字符） | `your_jwt_secret_here_at_least_32_chars` | 从密钥管理服务获取 |
-
-### 本地开发 vs 生产环境
-
-**本地开发**：`.env` 中使用 `localhost` 作为数据库和 Redis 地址。
-
-**Docker 部署**：使用 Docker 网络中的容器名（如 `postgres`、`redis`）作为地址。
-
-## 数据库管理
-
-### Prisma 迁移
-
-项目使用 Prisma 进行数据库版本管理。迁移文件保存在 `prisma/migrations/` 目录下。
-
-```bash
-# 创建新迁移
-npx prisma migrate dev --name <migration_name>
-
-# 部署迁移到生产环境
-npx prisma migrate deploy
-
-# 查看数据库状态
-npx prisma migrate status
-
-# 重新生成 Prisma Client
-npx prisma generate
-```
-
-### 自动迁移
-
-生产环境部署时，应用启动会自动执行 `prisma migrate deploy`，确保数据库表结构与代码同步。
-
-### 查看数据库
-
-```bash
-# 打开 Prisma Studio（Web 界面）
-npx prisma studio
-```
-
-访问 http://localhost:5555 查看和编辑数据。
+生产环境不要使用示例密钥。`SESSION_ENCRYPTION_KEY` 必须解析为 32 字节。
 
 ## 项目结构
 
-```
+```text
 nightdeal-backend/
-├── docker-compose.yml          # PostgreSQL + Redis 服务
-├── Dockerfile                  # 生产环境镜像
-├── .env.example                # 环境变量示例
-├── .env                        # 环境变量（gitignore）
-├── package.json
-├── tsconfig.json
-├── nest-cli.json
+├── src/
+│   ├── auth/                  # 微信登录、JWT、用户资料
+│   ├── common/                # 全局过滤器、拦截器、WebSocket guard
+│   ├── config/                # 环境变量校验
+│   ├── health/                # 健康检查
+│   ├── prisma/                # Prisma service
+│   ├── redis/                 # Redis service 和 Socket.IO adapter
+│   ├── room/                  # 房间、角色分配、REST 和 WebSocket
+│   ├── storage/               # 头像压缩和 OSS 上传
+│   └── main.ts                # 应用入口
 ├── prisma/
-│   ├── schema.prisma           # 数据库 Schema
-│   └── migrations/             # 数据库迁移文件
-└── src/
-    ├── main.ts                 # 应用入口
-    ├── app.module.ts           # 根模块
-    ├── config/
-    │   └── config.module.ts    # 全局配置模块
-    ├── prisma/
-    │   ├── prisma.module.ts    # Prisma 全局模块
-    │   └── prisma.service.ts   # 数据库服务
-    ├── redis/
-    │   ├── redis.module.ts     # Redis 全局模块
-    │   └── redis.service.ts    # 缓存服务
-    ├── health/
-    │   ├── health.controller.ts # 健康检查接口
-    │   └── health.module.ts
-    ├── auth/
-    │   ├── auth.module.ts      # 认证模块
-    │   ├── auth.controller.ts  # 登录接口
-    │   ├── auth.service.ts     # 认证服务
-    │   ├── auth.guard.ts       # 鉴权守卫
-    │   └── dto/                # 数据传输对象
-    └── common/
-        ├── filters/
-        │   └── http-exception.filter.ts  # 全局异常过滤器
-        └── interceptors/
-            └── transform.interceptor.ts  # 响应格式化拦截器
+│   ├── schema.prisma
+│   ├── migrations/
+│   └── generated/prisma/      # Prisma Client 输出目录
+├── docs/
+│   ├── SGS-DEVELOPMENT.md
+│   └── wechat-auth.md
+├── DEVELOPMENT.md
+├── docker-compose.yml
+├── Dockerfile
+├── Jenkinsfile
+└── package.json
 ```
 
 ## 可用脚本
 
-```bash
-# 开发模式（热重载）
-npm run start:dev
+| 命令 | 说明 |
+| --- | --- |
+| `npm run start:dev` | 开发模式启动 |
+| `npm start` | 运行构建后的生产入口 |
+| `npm run build` | 构建项目 |
+| `npm test` | 运行 Jest 测试 |
+| `npm test -- --runInBand` | 单进程运行测试，CI/排查推荐 |
+| `npm run test:cov` | 测试覆盖率 |
+| `npm run prisma:migrate` | 创建开发迁移 |
+| `npm run prisma:deploy` | 部署迁移 |
+| `npm run prisma:generate` | 生成 Prisma Client |
 
-# 构建生产版本
-npm run build
-
-# 运行生产版本
-npm start
-
-# Prisma 相关
-npm run prisma:migrate    # 创建迁移
-npm run prisma:deploy     # 部署迁移
-npm run prisma:generate   # 生成 Client
-```
-
-## API 接口
-
-### 健康检查
-
-```
-GET /api/health
-```
-
-### 认证
-
-```
-POST /api/auth/login
-Body: { "code": "wx_login_code" }
-Response: { "token": "jwt_token", "user": { "id": "...", "nickName": "", "avatarUrl": "" } }
-
-POST /api/auth/update-profile
-Header: Authorization: Bearer <token>
-Body: { "nickName": "玩家1", "avatarUrl": "https://..." }
-```
-
-## 常见问题
-
-### 端口被占用
-
-如果 5432 或 6379 端口被占用，可以修改 `docker-compose.yml` 中的端口映射：
-
-```yaml
-ports:
-  - '5433:5432'  # 改为 5433
-```
-
-同时更新 `.env` 中的连接地址。
-
-### 数据库连接失败
-
-确保 Docker 容器已启动且健康检查通过：
+## 数据库管理
 
 ```bash
-docker compose ps
-docker compose logs postgres
+npm run prisma:migrate
+npm run prisma:deploy
+npm run prisma:generate
 ```
 
-### Prisma Client 未生成
+查看数据库：
 
 ```bash
-npx prisma generate
+npx prisma studio
 ```
 
-### 重置数据库
+重置本地数据库：
 
 ```bash
-# 删除所有数据并重新迁移
 npx prisma migrate reset
 ```
 
+## REST API 摘要
+
+所有业务响应默认经过统一包装：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {}
+}
+```
+
+### Health
+
+| 方法 | 路径 | 认证 | 说明 |
+| --- | --- | --- | --- |
+| `GET` | `/api/health` | 否 | 健康检查 |
+
+### Auth
+
+| 方法 | 路径 | 认证 | 说明 |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/login` | 否 | 微信 code 登录 |
+| `POST` | `/api/auth/update-profile` | 是 | 更新昵称和头像 |
+| `POST` | `/api/auth/avatar/credential` | 是 | 已废弃，返回 410 |
+| `POST` | `/api/auth/avatar/upload` | 是 | 上传头像到 OSS |
+
+### Rooms
+
+| 方法 | 路径 | 认证 | 说明 |
+| --- | --- | --- | --- |
+| `POST` | `/api/rooms` | 是 | 创建房间 |
+| `GET` | `/api/rooms/:code` | 是 | 获取房间详情 |
+| `POST` | `/api/rooms/:code/join` | 是 | 加入房间 |
+| `POST` | `/api/rooms/:code/leave` | 是 | 离开房间 |
+| `POST` | `/api/rooms/:code/start` | 是 | 开始游戏 |
+| `POST` | `/api/rooms/:code/end` | 是 | 结束游戏 |
+| `POST` | `/api/rooms/:code/kick` | 是 | 房主踢人 |
+| `PATCH` | `/api/rooms/:code/settings` | 是 | 更新房间设置 |
+| `PUT` | `/api/rooms/:code/settings` | 是 | 更新房间设置兼容入口 |
+| `GET` | `/api/rooms/:code/my-role` | 是 | 获取自己的角色 |
+
+## WebSocket 摘要
+
+命名空间：
+
+```text
+/room
+```
+
+认证：
+
+```ts
+io('/room', {
+  auth: { token },
+  transports: ['websocket'],
+});
+```
+
+客户端事件：
+
+| 事件 | 说明 |
+| --- | --- |
+| `room:join` | 加入或重连房间 |
+| `room:leave` | 离开房间 |
+| `room:kick` | 房主踢人 |
+| `room:start` | 开始游戏 |
+| `room:end` | 结束游戏 |
+| `room:settings-update` | 更新房间设置 |
+| `player:update` | 请求广播最新房间状态 |
+
+服务端会通过 `room:state` 广播公开房间状态，并通过 `user:{userId}` 单独发送玩家自己的角色。
+
 ## 开发文档
 
-详细的开发计划和架构设计请参考 [DEVELOPMENT.md](./DEVELOPMENT.md)。
+| 文档 | 内容 |
+| --- | --- |
+| [DEVELOPMENT.md](./DEVELOPMENT.md) | 当前后端实现、接口、数据模型、Redis、测试重点 |
+| [docs/wechat-auth.md](./docs/wechat-auth.md) | 微信登录、JWT、session 和头像上传 |
+| [docs/SGS-DEVELOPMENT.md](./docs/SGS-DEVELOPMENT.md) | SGS 游戏模式实现 |
+
+## 提交前检查
+
+```bash
+npm test -- --runInBand
+npm run build
+```
+
+如果修改了 Prisma schema：
+
+```bash
+npm run prisma:generate
+```

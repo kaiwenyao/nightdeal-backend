@@ -1,256 +1,266 @@
-# 微信小程序登录授权 — 后端实现说明
+# WeChat Auth Development Guide
 
-> 调研对象：在微信小程序内完成"登录 + 获取用户昵称 + 获取用户头像"，并把昵称/头像 URL 持久化到我方数据库。
-> 本文针对 **`nightdeal-backend`**（NestJS）仓库，列出**需要实现的内容**。前端对应文档：`nightdeal-minip/docs/wechat-auth.md`。
+本文档描述当前后端微信登录、JWT、session 和头像能力的实现状态。
 
----
+## 1. 当前范围
 
-## 1. 背景与政策约束（必读）
+已实现能力：
 
-### 1.1 微信官方政策
+- 微信小程序 `jscode2session` 登录
+- 用户自动创建和资料更新
+- 2 小时 JWT 签发和校验
+- Redis session 校验
+- 微信 `session_key` AES-256-GCM 加密存储
+- 服务端头像接收、压缩和上传 OSS
 
-| 时间 | 变更 |
-|---|---|
-| 2021-04 | 推出 `wx.getUserProfile` 替代 `wx.getUserInfo` |
-| **2022-10-25** | **`wx.getUserProfile` 对新版本统一返回灰色默认头像 + "微信用户" 昵称**（来源：微信开放社区官方公告） |
-| 2022-10-25 起 | 官方推荐使用"**头像昵称填写能力**"（基础库 ≥ 2.21.2） |
-| 基础库 2.24.4 起 | `<input type="nickname">` 在 onBlur 后异步执行违规检测 |
+未实现能力：
 
-**结论**：在本项目（AppID `***REMOVED_APPID***`，2024 年后创建的新小程序）中，**不存在任何官方接口可以直接拿到 `wx.qlogo.cn` 永久头像 URL**。
+- 微信手机号解密
+- `msgSecCheck` 内容安全检查
+- 前端直传 OSS 凭证
 
-### 1.2 头像存储路径决策
+## 2. 环境变量
 
-需求："头像必须以 URL 形式存库；URL 必须是在线链接；不在我方业务服务器存图片。"
+| 变量 | 说明 |
+| --- | --- |
+| `WX_APPID` | 微信小程序 AppID |
+| `WX_SECRET` | 微信小程序 AppSecret |
+| `WX_LOGIN_TIMEOUT_MS` | 微信登录请求超时时间 |
+| `JWT_SECRET` | JWT 签名密钥 |
+| `SESSION_ENCRYPTION_KEY` | 32 字节 AES-256-GCM 加密密钥 |
+| `REDIS_URL` | Redis 连接字符串 |
+| `OSS_ACCESS_KEY_ID` | 阿里云 OSS AccessKey ID |
+| `OSS_ACCESS_KEY_SECRET` | 阿里云 OSS AccessKey Secret |
+| `OSS_ENDPOINT` | OSS endpoint |
+| `OSS_BUCKET` | OSS bucket |
+| `OSS_REGION` | OSS region |
+| `OSS_AVATAR_KEY_PREFIX` | 头像对象 key 前缀 |
+| `AVATAR_URL_PREFIX` | 头像公开 URL 前缀，也是用户资料头像 URL 白名单前缀 |
 
-`<button open-type="chooseAvatar">` 回调里拿到的是 **临时本地文件路径**（`wxfile://tmp/...` 或 `http://tmp/...`），路径会过期、跨设备不可用，因此**不能直接写库**。
+`SESSION_ENCRYPTION_KEY` 必须解析为 32 字节。生产环境不要使用示例值。
 
-采纳方案：**前端 `wx.uploadFile` 把临时文件上传到后端 `/auth/avatar/upload`，后端压缩后写入阿里云 OSS（对象存储），数据库只保存 OSS 返回的 CDN URL**。我方业务服务器只短暂处理图片字节流，不落盘保存原图。
+## 3. 登录流程
 
-### 1.3 整体时序
+客户端调用：
 
-```
-[小程序]                       [Backend]                    [阿里云 OSS]
-   |                              |                              |
-   |--- wx.login() -> code        |                              |
-   |--- POST /auth/login ------->|                               |
-   |                              |--- jscode2session ------>    |
-   |                              |    （微信开放平台）          |
-   |<-- { token, user } ---------|                              |
-   |                              |                              |
-   |--- chooseAvatar (按钮点击)                                  |
-   |    得到 wxfile:// 临时路径                                  |
-   |                              |                              |
-   |--- wx.uploadFile /auth/avatar/upload ->|                    |
-   |                              |--- compress + putObject ---> |
-   |                              |<-- OSS object key ----------- |
-   |<-- { avatarUrl } ------------|                              |
-   |                              |                              |
-   |--- POST /auth/update-profile ->|                            |
-   |    { nickName, avatarUrl }     | 校验 url 前缀白名单         |
-   |                              | 写库 User.{nickName,avatarUrl}|
-   |<-- { user } ----------------|                              |
-```
+```http
+POST /api/auth/login
+Content-Type: application/json
 
----
-
-## 2. 现状（已完成）✅
-
-代码现状对照（截至本文落地时）：
-
-| 模块 | 文件 | 现状 |
-|---|---|---|
-| 模块装配 | `src/auth/auth.module.ts` | ✅ |
-| 登录控制器 | `src/auth/auth.controller.ts` | ✅ `POST /auth/login`、`POST /auth/update-profile` |
-| 登录服务 | `src/auth/auth.service.ts` | ✅ `code2Session` + JWT 签发 + `session_key` AES-256-CBC 加密存 Redis 2h |
-| JWT 守卫 | `src/auth/auth.guard.ts` | ✅ Bearer Token 校验 |
-| 用户表 | `prisma/schema.prisma` `User` | ✅ `openId`、`nickName`、`avatarUrl`（默认空串） |
-| 限流 | `@Throttle({ default: { limit: 10, ttl: 60000 } })` | ✅ 登录 10/min |
-| 依赖 | `@nestjs/jwt`、`@nestjs/config`、`ioredis`、`prisma`、`class-validator` | ✅ |
-
-> 现存代码已实现"登录 + 拿到 openId + 写空白 User + 颁发 token"的最短链路。**剩下的所有 TODO 都围绕"头像 URL 的合法落库"和"昵称的合规性"。**
-
----
-
-## 3. 需实现的内容（TODO）
-
-### 3.1 对象存储模块 `src/storage/`（新增）
-
-**目标**：对 `nightdeal-minip` 暴露一个鉴权后的头像上传端点，由后端压缩图片并写入 `avatars/<userId>/...` 路径。
-
-**选型**：阿里云 OSS。理由：
-
-- 国内可用区低延迟，小程序 `wx.uploadFile` 上传到后端后再写 OSS，兼容性好。
-- OSS AccessKey 仅保存在后端服务端环境变量中，不下发到小程序客户端。
-- 公网读 URL 形如 `https://<bucket>.oss-<region>.aliyuncs.com/avatars/<userId>/<ts>.jpg`，可直接作为 `<image src>` 使用。
-
-**安装依赖**：
-
-```bash
-npm i ali-oss
-```
-
-**新增文件**：
-
-```
-src/storage/
-├── storage.module.ts
-├── storage.service.ts          # compressAndUploadAvatar(buffer, userId)
-├── storage.controller.ts       # （可选）独立挂载，或直接挂在 auth.controller 下
-```
-
-**Service 接口**：
-
-```ts
-class StorageService {
-  async compressAndUploadAvatar(fileBuffer: Buffer, userId: string): Promise<string>;
+{
+  "code": "wx-login-code"
 }
 ```
 
-**端点**：
+服务端流程：
 
-| Method | Path | Guard | 说明 |
-|---|---|---|---|
-| `POST` | `/auth/avatar/credential` | `AuthGuard` | **已废弃**。返回 410，不再下发任何 OSS 凭证 |
-| `POST` | `/auth/avatar/upload` | `AuthGuard` | **已实现**。前端 `multipart/form-data` 上传字段 `avatar`（≤5MB，jpg/png/webp/gif），服务端用 `sharp` 压缩为 256×256 JPEG 并写入 OSS，返回 `{ avatarUrl }` |
+1. 校验 `code`
+2. 调用微信接口：
 
-> **当前小程序端使用 `/auth/avatar/upload`**（见 `nightdeal-minip/pages/index/index.ts → uploadAvatarToServer`）。`/credential` 通道已禁用，避免把 OSS AccessKey 派生签名下发到客户端。
+```text
+https://api.weixin.qq.com/sns/jscode2session
+```
 
-挂载位置：独立 `StorageController`（位于 `src/storage/storage.controller.ts`，挂载在 `/auth/avatar/*` 路径下，未来可扩展到房间封面等）。
+3. 使用返回的 `openid` 创建或更新 `User`
+4. 签发 JWT
+5. 加密 `session_key`
+6. 写入 Redis：
 
-### 3.2 头像 URL 域名白名单校验
+```text
+session:{userId}
+```
 
-**问题**：当前 `UpdateProfileDto.avatarUrl` 仅 `@IsString()`，前端传 `wxfile://tmp/...`、`http://attacker.com/x.jpg` 都会被吞下入库。
+7. 返回用户和 token
 
-**修改文件**：`src/auth/dto/update-profile.dto.ts`
+成功响应经过全局响应包装后形如：
 
-```ts
-import { IsString, IsOptional, Length, MaxLength, Validate } from 'class-validator';
-import { ValidatorConstraint, ValidatorConstraintInterface } from 'class-validator';
-
-@ValidatorConstraint({ name: 'isAvatarUrl', async: false })
-class IsAvatarUrl implements ValidatorConstraintInterface {
-  validate(value: unknown): boolean {
-    if (typeof value !== 'string' || value.length === 0) return true; // 空串放行（保留原值）
-    if (!value.startsWith('https://')) return false;
-    const prefix = process.env.AVATAR_URL_PREFIX || '';
-    return prefix.length > 0 && value.startsWith(prefix);
-  }
-  defaultMessage(): string {
-    return 'avatarUrl 必须是我方 OSS 域名下的 https URL';
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "token": "jwt-token",
+    "user": {
+      "id": "user-id",
+      "nickName": "",
+      "avatarUrl": ""
+    }
   }
 }
+```
 
-export class UpdateProfileDto {
-  @IsString()
-  @IsOptional()
-  @Length(1, 20)
-  nickName?: string;
+`POST /api/auth/login` 当前限流为 5 次/分钟。
 
-  @IsString()
-  @IsOptional()
-  @MaxLength(512)
-  @Validate(IsAvatarUrl)
-  avatarUrl?: string;
+## 4. 微信接口错误处理
+
+| 场景 | 当前行为 |
+| --- | --- |
+| 微信请求超时 | 返回网关超时类错误 |
+| 网络错误 | 返回服务不可用类错误 |
+| 微信返回 `errcode` | 记录必要日志，向客户端返回泛化登录失败 |
+| 缺少 `openid` | 视为登录失败 |
+| 配置仍为占位值 | 登录失败 |
+
+服务端不把微信 `session_key`、`openid` 或微信原始错误细节直接暴露给客户端。
+
+## 5. JWT 和 Session
+
+JWT 配置：
+
+| 项 | 值 |
+| --- | --- |
+| 算法 | HS256 |
+| 过期时间 | 2 小时 |
+| Payload | `sub`、`openId` |
+
+认证校验流程：
+
+1. 校验 JWT 签名和过期时间
+2. 读取 payload 中的 `sub`
+3. 检查 Redis 是否存在 `session:{userId}`
+4. session 不存在时认证失败
+
+这意味着服务端可以通过删除 Redis session 使 token 提前失效。
+
+## 6. Session Key 加密
+
+微信 `session_key` 不明文落 Redis。当前实现使用：
+
+- 算法：AES-256-GCM
+- IV：12 字节随机值
+- Auth tag：随密文一起保存
+- Redis TTL：7200 秒
+
+Redis value 格式：
+
+```text
+{iv}:{encrypted}:{authTag}
+```
+
+## 7. 用户资料
+
+接口：
+
+```http
+POST /api/auth/update-profile
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "nickName": "Alice",
+  "avatarUrl": "https://cdn.example.com/avatars/user-id/avatar.jpg"
 }
 ```
 
-**配置项**：
+昵称规则：
 
-- `AVATAR_URL_PREFIX=https://nightdeal.oss-cn-shanghai.aliyuncs.com/avatars/`
+- 1 到 20 个字符
+- 支持中文、英文、数字、下划线、空格、`·`、`.`、`-`
 
-**显式拒绝**：
+头像 URL 规则：
 
-- `wxfile://`、`http://tmp/`、`http://usr/`
-- 任何非 https
-- 任何不以白名单前缀开头的 URL
+- 可以为空字符串
+- 必须是 HTTPS
+- 必须以 `AVATAR_URL_PREFIX` 开头
 
-### 3.3 昵称合规与二次安检
+该限制用于避免用户资料写入任意外部头像地址。
 
-**问题**：
+## 8. 头像上传
 
-- 前端 `<input type="nickname">` 在 2.24.4+ 会做异步安检，但**前端检查不可信**，必须服务端兜底。
-- 微信 `security.msgSecCheck` v2 接口可对昵称文本做合规检测。
+当前实际使用服务端上传：
 
-**改动**：
-
-1. `UpdateProfileDto.nickName`：`@Length(1, 20)`、Pipe 中 trim、禁纯空白。
-2. 新增 `src/wx/wx-access-token.service.ts`：缓存 access_token 到 Redis（key `wx:access_token`，TTL 7000s，留余量）。
-3. 新增 `src/wx/wx-msg-sec-check.service.ts`：
-   - 调用 `https://api.weixin.qq.com/wxa/msg_sec_check?access_token=...`
-   - 入参 `{ openid, scene: 1, content: nickName, version: 2 }`（scene=1 是资料类）
-   - 返回 `{ result: { suggest: 'pass' | 'review' | 'risky' } }`
-4. `AuthService.updateProfile` 中：若 `nickName` 命中 `risky`，抛 `UnprocessableEntityException`，前端按错误矩阵处理。
-5. 灰度开关 `WX_MSG_SEC_CHECK_ENABLED=true|false`，本地开发可关。
-
-### 3.4 配置（`.env`）
-
-新增以下变量（不要提交真实值，更新 `.env.example`）：
-
-```env
-# 阿里云 OSS — 仅服务端使用
-# 强烈建议用一个仅授予 oss:PutObject 到 avatars/* 路径的 RAM 子账号 AK
-OSS_ACCESS_KEY_ID=
-OSS_ACCESS_KEY_SECRET=
-OSS_BUCKET=nightdeal
-OSS_REGION=oss-cn-shanghai
-OSS_AVATAR_KEY_PREFIX=avatars/
-
-# 入库白名单（落库前缀校验）
-AVATAR_URL_PREFIX=https://nightdeal.oss-cn-shanghai.aliyuncs.com/avatars/
-
-# 内容安全
-WX_MSG_SEC_CHECK_ENABLED=true
+```http
+POST /api/auth/avatar/upload
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
 ```
 
-### 3.5 测试覆盖
+表单字段：
 
-| 类型 | 用例 |
-|---|---|
-| Unit | `StorageService.compressAndUploadAvatar` → 压缩后写入 `avatars/<userId>/<ts>.jpg` |
-| Unit | `StorageController.getAvatarCredential` → 返回 410，不下发 OSS 凭证 |
-| Unit | `IsAvatarUrl` validator → 拒 wxfile://、http://、跨域名 https |
-| Unit | `WxMsgSecCheckService` → mock fetch 返回 risky 时 throw |
-| Integration | `POST /auth/update-profile` 传 `wxfile://x` → 400 |
-| Integration | `POST /auth/update-profile` 传合规 OSS URL → 200 + DB 写入 |
-| E2E | login → avatar upload → update-profile → DB.avatarUrl 形如 `https://*.aliyuncs.com/avatars/...` |
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `avatar` | File | 用户头像 |
 
----
+限制：
 
-## 4. 字段约定
+- 最大 5MB
+- MIME 类型只允许 JPEG、PNG、WebP、GIF
+- 10 次/分钟限流
+- 需要 JWT 认证
 
-| 字段 | 类型 | 限制 | 来源 |
-|---|---|---|---|
-| `openId` | string | 微信侧不可变 ID | `jscode2session` |
-| `nickName` | string | 1–20 字符；`security.msgSecCheck` v2 通过 | 前端 `<input type=nickname>` 提交 |
-| `avatarUrl` | string | https；以 `AVATAR_URL_PREFIX`（OSS bucket 域名）开头；≤512 | 前端 `wx.uploadFile` 后回填 |
+处理流程：
 
-`avatarUrl` 允许空串，表示用户未上传头像，前端渲染默认头像。
+1. `FileInterceptor` 接收文件
+2. `sharp` 将图片限制到 256x256 内
+3. 输出 progressive JPEG
+4. 质量从 80 逐步降低到 30，目标不超过 100KB
+5. 上传到 OSS
+6. 返回公开头像 URL
 
----
+返回：
 
-## 5. 不做的事（明确边界）
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "avatarUrl": "https://cdn.example.com/avatars/user-id/1760000000000.jpg"
+  }
+}
+```
 
-- ❌ 不接 `unionId`（除非未来跨小程序/公众号互认有需求）。
-- ❌ 不做手机号绑定（`getPhoneNumber`）— 与本次任务无关。
-- ❌ 不在我方业务服务器落盘保存头像原图；不做 base64 入库；不做图片代理转发。
-- ❌ 不做头像内容审核（可后续接入阿里云内容安全 / OSS 图片审核扫描）。
-- ❌ 不在小程序端硬编码任何 AccessKeySecret；签名必须由后端完成。
+旧接口：
 
----
+```http
+POST /api/auth/avatar/credential
+```
 
-## 6. 引用资料
+该接口当前保留兼容入口，但固定返回 `410 Gone`，不再签发前端直传凭证。
 
-- 微信开放社区公告 _关于小程序 wx.getUserInfo 与 wx.getUserProfile 接口调整_（restriction date 2022-10-25）
-- 微信开发者文档 / 头像昵称填写能力（基础库 ≥ 2.21.2；2.24.4 起 nickname onBlur 异步安检）
-- 微信开发者文档 / `security.msgSecCheck` v2
-- 阿里云 OSS / 服务端 PutObject / RAM 最小权限配置
+## 9. WebSocket 认证
 
----
+Socket.IO `/room` namespace 使用同一套 JWT/session 校验。
 
-## 7. 实施次序建议
+推荐连接方式：
 
-1. 3.4 配置先行，开通 OSS bucket（公网读、私写）、创建专用 RAM 子账号 AK 仅授予 `oss:PutObject` 到 `avatars/*`。
-2. 3.1 StorageModule（服务端压缩 + OSS PutObject）— 单元测试通过；用 curl POST 一张测试图片打通链路。
-3. 3.2 DTO 校验 — 立即提升安全水位，可独立合并。
-4. 3.3 内容安检（可放在第二个 PR，灰度上）。
-5. 联调阶段配合前端 `nightdeal-minip/docs/wechat-auth.md` §4.1–4.2。
+```ts
+io('/room', {
+  auth: { token },
+  transports: ['websocket'],
+});
+```
+
+服务端也兼容：
+
+```http
+Authorization: Bearer <token>
+```
+
+连接成功后，socket 会加入：
+
+```text
+user:{userId}
+```
+
+用于向单个用户发送只属于自己的角色信息。
+
+## 10. 安全注意事项
+
+- 不要把 `WX_SECRET`、`JWT_SECRET`、`SESSION_ENCRYPTION_KEY` 或 OSS 密钥提交到仓库
+- 生产环境必须使用强随机 `JWT_SECRET`
+- `SESSION_ENCRYPTION_KEY` 必须是 32 字节密钥
+- 微信登录错误响应应继续保持泛化，不要向客户端暴露微信原始响应
+- 头像 URL 前缀变更时，需要同步检查 `AVATAR_URL_PREFIX` 和 OSS 公开访问策略
+- 如果未来加入手机号解密，需要先补齐 session_key 解密读取逻辑和对应测试
+
+## 11. 测试重点
+
+修改认证模块时应覆盖：
+
+- 登录成功和用户 upsert
+- 微信接口超时、网络错误、业务错误
+- JWT 过期和 Redis session 缺失
+- session_key 加密输出格式
+- 用户昵称和头像 URL 校验
+- 头像 MIME、大小、压缩和 OSS 上传错误
+- WebSocket 握手 token 提取和认证失败路径
