@@ -382,20 +382,29 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
           const timeout = setTimeout(async () => {
             try {
               this.clearOfflineTimeout(userId, roomCode);
+              // Re-check: if the player reconnected and the offline marker was
+              // cleared by handleJoin(), skip cleanup to avoid a race condition.
+              const stillOffline = await this.roomService.isPlayerOffline(roomCode, userId);
+              if (!stillOffline) {
+                return;
+              }
               const room = await this.roomService.getRoom(roomCode);
               if (room && room.status === 'PLAYING') {
                 return;
               }
-              const isOffline = await this.roomService.isPlayerOffline(roomCode, userId);
-              if (isOffline) {
-                await this.roomService.leaveRoom(roomCode, userId);
-                const playerCount = await this.roomService.getPlayerCount(roomCode);
-                this.server.to(roomCode).emit('room:player-left', {
-                  userId,
-                  playerCount,
-                });
-                await this.broadcastRoomState(roomCode);
+              // Re-check once more before the destructive leaveRoom():
+              // the player may have reconnected while getRoom() was awaited.
+              const stillOfflineBeforeLeave = await this.roomService.isPlayerOffline(roomCode, userId);
+              if (!stillOfflineBeforeLeave) {
+                return;
               }
+              await this.roomService.leaveRoom(roomCode, userId);
+              const playerCount = await this.roomService.getPlayerCount(roomCode);
+              this.server.to(roomCode).emit('room:player-left', {
+                userId,
+                playerCount,
+              });
+              await this.broadcastRoomState(roomCode);
             } catch (error) {
               this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
             }
