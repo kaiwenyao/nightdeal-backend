@@ -694,9 +694,10 @@ export class RoomService {
     });
 
     for (const room of idleRooms) {
-      const playerCount = await this.getPlayerCount(room.code);
-      if (playerCount > 0) {
-        this.logger.log(`Skipping idle cleanup for room ${room.code}: still has ${playerCount} player(s)`);
+      const players = await this.getPlayers(room.code);
+      const hasOnlinePlayer = players.some((p) => p.isOnline);
+      if (hasOnlinePlayer) {
+        this.logger.log(`Skipping idle cleanup for room ${room.code}: still has online player(s)`);
         continue;
       }
       await this.prisma.roomPlayer.deleteMany({ where: { roomId: room.id } });
