@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum, Validate, IsNotEmpty } from 'class-validator';
+import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum, Validate, IsNotEmpty, MaxLength } from 'class-validator';
 import { GameType } from '../../../prisma/generated/prisma/client.js';
 import { PartialRoleConfig } from '../role-config.schema';
 import { SgsRoleConfig } from '../sgs-role-assigner';
@@ -69,9 +69,14 @@ export class UpdatePlayerDto {
   @IsOptional()
   @IsString()
   @Length(1, 20)
+  @Matches(/^[一-龥a-zA-Z0-9_\s·.\-]+$/, {
+    message: '昵称只能包含中文、字母、数字和常见符号',
+  })
   nickName?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(512)
   @Validate(IsAvatarUrlConstraint)
   avatarUrl?: string;
 }

@@ -3,6 +3,7 @@ import { IsString, IsNotEmpty, IsOptional, Length, MaxLength, Matches, Validate,
 @ValidatorConstraint({ name: 'IsAvatarUrl', async: false })
 export class IsAvatarUrlConstraint implements ValidatorConstraintInterface {
   validate(url: string, args: ValidationArguments) {
+    if (typeof url !== 'string') return false;
     if (url === '') return true;
     if (!url.startsWith('https://')) return false;
     const prefix = process.env.AVATAR_URL_PREFIX;
