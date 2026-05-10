@@ -145,9 +145,10 @@ PROPOSAL (队长选 N 名候选人)
   ↓ 队长 submit
 PUBLIC_VOTE (所有玩家投赞成 / 反对)
   ↓ 全员投完
-  ├─ 多数赞成 (>50%, 平票视为否决) → MISSION
-  └─ 否决 → 队长后移一人 → 下一次提案 (同一轮 attemptNo +1)
-       └─ attemptNo 达到 5 → GAME_OVER (winnerSide = EVIL, reason = FIVE_REJECTIONS)
+  ├─ 多数赞成 (>50%, 平票视为否决) → MISSION（含 attemptNo == 5 时：赞成通过则正常进任务）
+  └─ 否决（含平票视为否决）
+       ├─ attemptNo < 5 → 队长后移 → 同一轮 PROPOSAL（attemptNo +1）
+       └─ attemptNo == 5 → GAME_OVER (winnerSide = EVIL, reason = FIVE_REJECTIONS)
 MISSION (候选人投成功 / 失败；蓝方禁选失败)
   ↓ 全员投完
 ROUND_RESULT (结算 失败票 vs requiredFails)
@@ -165,11 +166,11 @@ GAME_OVER (winnerSide = isMerlin ? EVIL : GOOD, reason = ASSASSINATION_*)
 | 场景 | 裁定 |
 | --- | --- |
 | 公投平票 (赞成 == 反对) | **视为否决**，attemptNo +1 |
-| 同一轮第 5 次提案 | 仍按正常 PROPOSAL → PUBLIC_VOTE 流程，但**不允许否决**（直接判 EVIL 胜整局，无须公投） |
+| 同一轮第 5 次提案（`attemptNo == 5`） | **仍按正常** PROPOSAL → PUBLIC_VOTE **全员公投**（与第 1–4 次相同，没有「禁止否决」的特殊流程）。**多数赞成** → 正常进入 MISSION；任务结算后下一轮 `attemptNo` 重置。**否决（含平票）** → 立即 `GAME_OVER`（`winnerSide = EVIL`，`reason = FIVE_REJECTIONS`）。 |
 | 队长在 PROPOSAL 阶段断线超 60s | 自动 fast-forward：当前 attempt 视为否决，attemptNo +1，队长继续后移 |
 | 候选人在 MISSION 阶段断线超 60s | 蓝方默投成功 / 红方默投失败（避免红方拖延） |
 | 普通玩家 PUBLIC_VOTE 阶段断线超 60s | 视为反对 |
-| 刺客在 ASSASSINATE 阶段断线超 60s | 蓝方直接获胜（守护梅林） |
+| 刺杀阶段（ASSASSINATE）仅刺客可操作；刺客断线或超时未选目标 | 默认仍判**蓝方获胜**（守护梅林）。网杀建议单独配置 **90s–120s** 超时（高于 PROPOSAL / VOTE 的 60s），因此阶段常为全场高潮、语音讨论较长；仅刺客客户端展示选目标 UI。 |
 | 房主提前调用 `POST /api/rooms/:code/end` | 房间立即回到 `WAITING`，写 `AvalonGame.endedAt`，`winnerSide = null`、`winnerReason = HOST_ABORTED` |
 
 ---
