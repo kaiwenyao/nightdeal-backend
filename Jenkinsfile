@@ -77,10 +77,32 @@ spec:
         stage('1. 拉取代码') {
             steps {
                 checkout scm
+                container('node') {
+                    script {
+                        // 判断是否为「纯文档变更」（仅 *.md），是则跳过后续构建/测试/部署
+                        def docsOnly = false
+                        try {
+                            sh 'git config --global --add safe.directory "$(pwd)" || true'
+                            def changedFiles = sh(returnStdout: true, script: 'git diff --name-only HEAD~1 HEAD 2>/dev/null || true').trim()
+                            if (changedFiles) {
+                                def nonDocFiles = changedFiles.split('\n').findAll { it && !it.toLowerCase().endsWith('.md') }
+                                docsOnly = nonDocFiles.isEmpty()
+                                echo "本次变更文件: ${changedFiles.split('\n').size()} 个，其中非文档: ${nonDocFiles.size()} 个"
+                            }
+                        } catch (e) {
+                            echo "无法判断是否纯文档分支 (${e.message})，按常规流程执行全部 stages"
+                        }
+                        env.DOCS_ONLY = docsOnly ? 'true' : 'false'
+                        echo "DOCS_ONLY=${env.DOCS_ONLY}"
+                    }
+                }
             }
         }
 
         stage('2. 安装依赖') {
+            when {
+                expression { return env.DOCS_ONLY != 'true' }
+            }
             steps {
                 container('node') {
                     script {
@@ -99,6 +121,9 @@ spec:
         }
 
         stage('3. 单元测试') {
+            when {
+                expression { return env.DOCS_ONLY != 'true' }
+            }
             steps {
                 container('node') {
                     script {
@@ -118,7 +143,10 @@ spec:
 
         stage('4. SonarQube 代码质量分析') {
             when {
-                expression { return params.SONAR_ENABLED }
+                allOf {
+                    expression { return params.SONAR_ENABLED }
+                    expression { return env.DOCS_ONLY != 'true' }
+                }
             }
             steps {
                 container('node') {
@@ -136,7 +164,10 @@ spec:
 
         stage('5. 构建并推送 Docker 镜像') {
             when {
-                not { changeRequest() }
+                allOf {
+                    not { changeRequest() }
+                    expression { return env.DOCS_ONLY != 'true' }
+                }
             }
             steps {
                 container('docker') {
@@ -196,6 +227,7 @@ spec:
                 allOf {
                     branch 'main'
                     not { changeRequest() }
+                    expression { return env.DOCS_ONLY != 'true' }
                 }
             }
             steps {
@@ -334,23 +366,38 @@ spec:
     }
 
     post {
-        always {
-            // 清理本 Job 在构建机上产生的本地镜像，减轻节点磁盘占用（推送成功后镜像已在 Registry）
-            container('docker') {
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
-                        docker rmi "${DOCKER_USER}/nightdeal-backend:build-${BUILD_NUMBER}" || true
-                        docker rmi "${DOCKER_USER}/nightdeal-backend:latest" || true
-                    '''
+        success {
+            // 仅在成功时清理本地镜像（说明已推送到 Registry，可以安全删除）
+            // 用 try/catch 兜底：万一 pod 已被回收，container() 会丢 node 上下文
+            script {
+                try {
+                    container('docker') {
+                        withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                            sh '''
+                                docker rmi "${DOCKER_USER}/nightdeal-backend:build-${BUILD_NUMBER}" || true
+                                docker rmi "${DOCKER_USER}/nightdeal-backend:latest" || true
+                            '''
+                        }
+                    }
+                } catch (e) {
+                    echo "镜像清理跳过（pod 可能已回收）: ${e.message}"
                 }
             }
-            cleanWs()
-        }
-        success {
             echo '✅ Pipeline 执行成功！'
         }
         failure {
             echo '❌ Pipeline 执行失败，请检查日志。'
+        }
+        always {
+            // cleanWs 也需要 node 上下文，pod 失败场景下用 try/catch 兜底，
+            // 否则会抛 MissingContextVariableException 把已经 ABORTED 的构建再失败一次
+            script {
+                try {
+                    cleanWs()
+                } catch (e) {
+                    echo "工作区清理跳过（pod 可能已回收）: ${e.message}"
+                }
+            }
         }
     }
 }
