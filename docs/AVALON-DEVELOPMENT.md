@@ -34,7 +34,7 @@
 
 - **不引入新 `GameType`**，继续复用 `GameType.AVALON`
 - **不破坏既有 `room:state` / `room:started` / `room:ended` 协议**
-- **不修改 `Room` / `RoomPlayer` / `GameRecord` 已有字段**，仅新增 model
+- **不修改 `Room` / `RoomPlayer` / `GameRecord` 既有数据库字段**；若 Prisma relation 需要，可在 `GameRecord` 上新增不落库的反向 relation 字段
 - **不修改通用房间生命周期**（创建 / 加入 / 离开 / 踢人 / Cron 清理）
 
 ---
@@ -98,7 +98,7 @@
 | 6 | 4 | 2 | 梅林 + 派西维尔 + 2 忠臣 + 刺客 + 莫甘娜 | — |
 | 7 | 4 | 3 | 梅林 + 派西维尔 + 2 忠臣 + 刺客 + 莫甘娜 + 奥伯伦（第三红方） | — |
 | 8 | 5 | 3 | 梅林 + 派西维尔 + 3 忠臣 + 刺客 + 莫甘娜 + 1 爪牙 | 莫德雷德（替换 1 爪牙） |
-| 9 | 6 | 3 | 梅林 + 派西维尔 + 4 忠臣 + 刺客 + 莫甘娜 + 莫德雷德 | 奥伯伦（替换 莫德雷德 或 刺客） |
+| 9 | 6 | 3 | 梅林 + 派西维尔 + 4 忠臣 + 刺客 + 莫甘娜 + 莫德雷德 | 奥伯伦（替换莫德雷德；若房主改成普通爪牙局，则替换 1 名爪牙；不得替换刺客） |
 | 10 | 6 | 4 | 梅林 + 派西维尔 + 4 忠臣 + 刺客 + 莫甘娜 + 莫德雷德 + 奥伯伦 | — |
 
 校验硬性规则：
@@ -108,6 +108,8 @@
 - 红方角色 + 爪牙 = 红方人数
 
 ### 2.4 任务人数 & 失败票阈值
+
+任务人数表基于**开局时的实际玩家数** `AvalonGame.playerCount`，不是房间容量 `Room.maxPlayers`。开局时冻结当时的 `RoomPlayer` 列表和座位；后续断线不改变本局 `playerCount`。所有候选座位、刺杀目标和投票总数都必须基于这份开局快照校验，禁止选择空座位。
 
 每轮派出人数表：
 
@@ -171,7 +173,7 @@ GAME_OVER (winnerSide = isMerlin ? EVIL : GOOD, reason = ASSASSINATION_*)
 | 候选人在 MISSION 阶段断线超 60s | 蓝方默投成功 / 红方默投失败（避免红方拖延） |
 | 普通玩家 PUBLIC_VOTE 阶段断线超 60s | 视为反对 |
 | 刺杀阶段（ASSASSINATE）仅刺客可操作；刺客断线或超时未选目标 | 默认仍判**蓝方获胜**（守护梅林）。网杀建议单独配置 **90s–120s** 超时（高于 PROPOSAL / VOTE 的 60s），因此阶段常为全场高潮、语音讨论较长；仅刺客客户端展示选目标 UI。 |
-| 房主提前调用 `POST /api/rooms/:code/end` | 房间立即回到 `WAITING`，写 `AvalonGame.endedAt`，`winnerSide = null`、`winnerReason = HOST_ABORTED` |
+| 房主提前调用 `POST /api/rooms/:code/end` | 若对局尚未进入 `GAME_OVER`，房间立即回到 `WAITING`，写 `AvalonGame.endedAt`，`winnerSide = null`、`winnerReason = HOST_ABORTED`；若已 `GAME_OVER`，只回到 `WAITING`，不得覆盖真实胜负原因 |
 
 ---
 
@@ -183,9 +185,18 @@ GAME_OVER (winnerSide = isMerlin ? EVIL : GOOD, reason = ASSASSINATION_*)
 | --- | --- |
 | `Room` | 不变。`gameType = AVALON` 触发 Avalon 流程 |
 | `RoomPlayer` | 不变。`role` 字段保存中文角色名（与 `role-assigner.ts` 当前一致） |
-| `GameRecord` | 不变。每局开局插一行，结束时回写 `endedAt` |
+| `GameRecord` | 保留现有数据库字段。每局开局插一行，结束时回写 `endedAt`；为 Prisma 关系可新增 `avalonGame AvalonGame?` 反向 relation 字段 |
 
 ### 3.2 新增 model（实现 PR 时落库）
+
+由于 `AvalonGame` 持有 `gameRecordId` 外键，现有 `GameRecord` model 需要补一个 Prisma 反向 relation 字段。该字段不新增数据库列：
+
+```prisma
+model GameRecord {
+  // ...existing fields
+  avalonGame AvalonGame?
+}
+```
 
 ```prisma
 model AvalonGame {
@@ -193,9 +204,10 @@ model AvalonGame {
   gameRecordId             String           @unique
   status                   AvalonGameStatus @default(IN_PROGRESS)
   phase                    AvalonPhase      @default(ROLE_REVEAL)
+  playerCount              Int                                  // 开局实际玩家数，冻结后供任务人数 / 投票总数使用
   currentRound             Int              @default(1)         // 1..5
   currentLeaderSeat        Int                                  // 当前队长座位
-  failedProposalsInRound   Int              @default(0)         // 0..4
+  failedProposalsInRound   Int              @default(0)         // 0..4；第 5 次否决时直接结束
   goodWins                 Int              @default(0)         // 0..3
   evilWins                 Int              @default(0)         // 0..3
   ladyOfTheLakeSeat        Int?                                 // 预留，v1 不写
@@ -343,7 +355,27 @@ stateDiagram-v2
 
 ## 5. 角色配置校验扩展
 
-现有 `roleConfigSchema` (file: `src/room/role-config.schema.ts`) **不变**。`AvalonRoleValidator` 在房主调用 `POST /rooms/:code/start` 时执行下列校验，任一失败返回 HTTP 400 + 业务码 40001：
+现有 `roleConfigSchema` (file: `src/room/role-config.schema.ts`) **不变**。Avalon 需要区分“设置阶段的结构校验”和“开局阶段的完整规则校验”，避免房主在 WAITING 阶段编辑配置时被过早拦截。
+
+### 5.1 设置阶段校验
+
+`RoomService.updateRoomSettings` 只做以下校验：
+
+- `maxPlayers` 在 5–10 之间，且不能小于当前房间人数
+- `roleConfig` 满足 `roleConfigSchema`
+- `roleConfig` 的角色总数等于目标人数 `targetMaxPlayers`
+
+设置阶段**不**强制：
+
+- 必含梅林 / 刺客
+- 红方人数匹配表
+- 派西维尔必须搭配莫甘娜
+
+这些规则在开局时统一校验。这样前端可以保存“仍需调整”的 WAITING 配置，但该配置不能开局。
+
+### 5.2 开局阶段校验
+
+`AvalonRoleValidator` 在房主调用 `POST /rooms/:code/start` 时执行下列校验，任一失败返回 HTTP 400 + 业务码 40001：
 
 ```ts
 function validateAvalonStart(playerCount: number, cfg: RoleConfig): void {
@@ -375,8 +407,8 @@ const EVIL_COUNT_TABLE: Record<number, number> = {
 ```
 
 校验位置：
-- `RoomService.updateRoomSettings` 时只校验 1 / 4 / 5（允许 WAITING 阶段配置不完整）
-- `RoomService.startGame` 时校验全部 1–5
+- `RoomService.updateRoomSettings` 执行 §5.1
+- `RoomService.startGame` 执行 §5.2 的全部 1–5
 
 ---
 
@@ -410,6 +442,8 @@ const EVIL_COUNT_TABLE: Record<number, number> = {
     "currentProposal": {
       "leaderSeat": 3,
       "memberSeats": [3, 5, 6],
+      "myPublicVote": null,
+      "iHavePublicVoted": false,
       "iAmMember": false,
       "myMissionVote": null
     },
@@ -432,6 +466,8 @@ const EVIL_COUNT_TABLE: Record<number, number> = {
 
 字段说明：
 - `myVision` 服务端按 §2.2 视野矩阵裁剪，**不能返回不应看到的角色**
+- `currentProposal.myPublicVote` 只返回当前用户自己的公投选择：`"APPROVE"` / `"REJECT"` / `null`
+- `currentProposal.iHavePublicVoted` 用于断线重连后恢复按钮禁用状态；不能由前端从进度数量推断
 - `currentProposal.iAmMember` 仅在 `phase === MISSION` 时有意义
 - `currentProposal.myMissionVote` 服务端只回当前用户自己的投票，其他人为 `null`
 - `history.proposals[].votes` **公开**所有玩家的公投结果（公投本就是公开的）
@@ -470,8 +506,8 @@ Authorization: Bearer <token>
 - 阶段必须为 `PROPOSAL`
 - 调用者 `seatNo` 必须等于 `currentLeaderSeat`
 - `memberSeats.length` 必须等于本轮 `teamSize`
-- `memberSeats` 元素互不重复，且都在 `[1..maxPlayers]`
-- 同 attemptNo 重复提交：以**最后一次为准**（前提仍是同一队长 / 同阶段），用 `AvalonProposal(roundId, attemptNo)` upsert
+- `memberSeats` 元素互不重复，且必须对应本局开局快照里的真实 `RoomPlayer.seatNo`，不能只校验 `[1..maxPlayers]`
+- 同 attemptNo 重复提交：提案一旦进入 `PUBLIC_VOTE` 即不可修改；重复提交返回 `ALREADY_SUBMITTED`。只有在服务端尚未发布提案、阶段仍为 `PROPOSAL` 且同一队长的幂等重试中，才允许返回既有结果，不允许覆盖队伍。
 
 **错误码：**
 
@@ -480,6 +516,7 @@ Authorization: Bearer <token>
 | 40901 | `PHASE_MISMATCH` |
 | 40301 | `NOT_LEADER` |
 | 40001 | `INVALID_TEAM_SIZE` |
+| 40901 | `ALREADY_SUBMITTED` |
 
 ### 6.3 POST /api/rooms/:code/avalon/public-vote
 
@@ -540,7 +577,7 @@ Authorization: Bearer <token>
 **校验：**
 - 阶段必须为 `ASSASSINATE`
 - 调用者 `role === '刺客'`
-- `targetSeat` 必须在 `[1..maxPlayers]` 且对应的 `RoomPlayer` 存在
+- `targetSeat` 必须对应本局开局快照里的真实 `RoomPlayer.seatNo`，不能只校验 `[1..maxPlayers]`
 
 ### 6.6 与通用接口的关系
 
@@ -552,7 +589,7 @@ Authorization: Bearer <token>
 | `POST /api/rooms/:c/join` | 加入 |
 | `POST /api/rooms/:c/leave` | 离开（PLAYING 阶段离开走 §2.6 断线托管） |
 | `POST /api/rooms/:c/start` | 开局（叠加 §5 校验） |
-| `POST /api/rooms/:c/end` | 房主结束，写 `AvalonGame.endedAt + winnerReason=HOST_ABORTED` |
+| `POST /api/rooms/:c/end` | 房主结束。若 Avalon 对局仍在进行中，写 `AvalonGame.endedAt + winnerReason=HOST_ABORTED`；若已 `GAME_OVER`，只回房间到 `WAITING`，保留真实胜负原因 |
 | `POST /api/rooms/:c/kick` | 仅 WAITING 阶段允许 |
 | `PATCH /api/rooms/:c/settings` | 仅 WAITING 阶段允许 |
 | `GET /api/rooms/:c` | 不返回 Avalon 对局明细（明细走 6.1） |
@@ -605,7 +642,8 @@ Authorization: Bearer <token>
 ```ts
 socket.emit('avalon:error', {
   code: 'PHASE_MISMATCH' | 'NOT_LEADER' | 'NOT_MEMBER' | 'NOT_ASSASSIN'
-      | 'INVALID_TEAM_SIZE' | 'EVIL_REQUIRED_FOR_FAIL' | 'ALREADY_VOTED' | 'GAME_ENDED',
+      | 'INVALID_TEAM_SIZE' | 'EVIL_REQUIRED_FOR_FAIL' | 'ALREADY_SUBMITTED'
+      | 'ALREADY_VOTED' | 'GAME_ENDED',
   message: string,
   phase?: AvalonPhase,            // 服务端当前阶段（便于客户端纠正）
   expectedPhase?: AvalonPhase,    // 该操作期望的阶段
@@ -619,7 +657,7 @@ socket.emit('avalon:error', {
 | `PHASE_MISMATCH` | 40901 | 409 |
 | `NOT_LEADER` / `NOT_MEMBER` / `NOT_ASSASSIN` | 40301 | 403 |
 | `INVALID_TEAM_SIZE` / `EVIL_REQUIRED_FOR_FAIL` | 40001 | 400 |
-| `ALREADY_VOTED` | 40901 | 409 |
+| `ALREADY_SUBMITTED` / `ALREADY_VOTED` | 40901 | 409 |
 | `GAME_ENDED` | 40401 | 404 |
 
 ### 7.6 事件时序示意
@@ -713,14 +751,16 @@ await prisma.$transaction(async (tx) => {
 ### 10.1 复用既有 Cron
 
 - `cleanupOfflinePlayers` (5 min) — WAITING 状态下离线超 5 分钟移除玩家。**PLAYING 状态不动。**
-- `cleanupIdleRooms` (10 min) — 30 分钟无活动删除房间，连带级联删除 `AvalonGame*`
+- `cleanupIdleRooms` (10 min) — 只清理 WAITING 空闲房间。Avalon 对局进行中时 `Room.status = PLAYING`，不会被该 Cron 删除，也不依赖它级联清理 `AvalonGame*`。
+- 已结束但尚未回到 WAITING 的 Avalon 对局必须通过 `room:end` 或专门的 Avalon 终局收尾逻辑处理，不应由 idle room cleanup 兜底删除。
 
 ### 10.2 新增 Cron：阶段超时托管
 
 ```ts
 @Cron('*/30 * * * * *')  // 每 30s
 async fastForwardOfflineActions() {
-  // 扫描所有 phase=PLAYING 且 currentLeaderSeat / 候选人 / 刺客 离线超 60s 的房间
+  // 扫描所有 Room.status=PLAYING 且 AvalonGame.status=IN_PROGRESS 的对局
+  // 若 currentLeaderSeat / 候选人 / 刺客 离线超 60s，则执行托管动作
   // 按 §2.6 表格执行 fast-forward
 }
 ```
@@ -734,7 +774,7 @@ async fastForwardOfflineActions() {
 
 ## 11. 测试要求
 
-实现 PR 必须覆盖以下测试用例（沿用项目 `common/testing.md` 80% 覆盖率标准）：
+实现 PR 必须覆盖以下测试用例。当前仓库没有独立的 `common/testing.md`，测试命令与覆盖率口径以 `package.json` 的 Jest 配置和 CI 要求为准。
 
 ### 11.1 单元测试
 
