@@ -134,6 +134,11 @@ export class AuthService {
       throw new WeChatApiException('微信登录失败，请重试');
     }
 
+    if (!data.openid || !data.session_key) {
+      this.logger.warn('WeChat login failed: missing openid or session_key');
+      throw new WeChatApiException('微信登录失败，请重试');
+    }
+
     return { openid: data.openid, session_key: data.session_key };
   }
 

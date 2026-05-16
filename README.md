@@ -250,7 +250,7 @@ io('/room', {
 | `room:start` | 开始游戏 |
 | `room:end` | 结束游戏 |
 | `room:settings-update` | 更新房间设置 |
-| `player:update` | 请求广播最新房间状态 |
+| `player:update` | 更新当前用户昵称/头像并向所在房间广播 `player:updated` |
 
 服务端会通过 `room:state` 广播公开房间状态，并通过 `user:{userId}` 单独发送玩家自己的角色。
 
