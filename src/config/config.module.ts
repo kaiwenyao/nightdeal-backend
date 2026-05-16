@@ -22,6 +22,8 @@ import * as Joi from 'joi';
         OSS_REGION: Joi.string().required(),
         OSS_AVATAR_KEY_PREFIX: Joi.string().default('avatars/'),
         AVATAR_URL_PREFIX: Joi.string().required(),
+        CORS_ORIGIN: Joi.string().allow('').optional(),
+        CORS_CREDENTIALS: Joi.string().valid('true', 'false').default('true'),
       }),
     }),
   ],

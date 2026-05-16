@@ -345,6 +345,31 @@ SGS 配置通过 `SgsRoleConfigSchema` 校验，角色分配同样使用 `crypto
 
 错误由全局异常过滤器包装，具体 HTTP status 仍由异常类型决定。
 
+错误响应形如：
+
+```json
+{
+  "code": 40001,
+  "message": "参数错误"
+}
+```
+
+当前业务错误码映射：
+
+| HTTP 场景 | `code` | 默认消息 |
+| --- | --- | --- |
+| `BadRequestException` | `40001` | 参数错误 |
+| `UnauthorizedException` | `40101` | 未登录 |
+| `ForbiddenException` | `40301` | 无权限操作 |
+| `NotFoundException` | `40401` | 房间不存在 |
+| `ConflictException` | `40901` | 已在房间中 |
+| `GoneException` | `41001` | 接口已废弃 |
+| `429` | `42901` | 请求过于频繁 |
+| `WeChatApiException` | `50002` | 微信服务暂时不可用，请稍后重试 |
+| 其他服务端错误 | `50001` | 服务器内部错误 |
+
+非生产环境响应会额外包含清理后的 `error` 字段；生产环境只返回泛化消息，避免泄露内部细节。
+
 ### 11.1 Health
 
 | 方法 | 路径 | 认证 | 说明 |
