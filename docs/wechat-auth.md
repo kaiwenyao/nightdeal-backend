@@ -111,7 +111,7 @@ JWT 配置：
 | --- | --- |
 | 算法 | HS256 |
 | 过期时间 | 2 小时 |
-| Payload | `sub`、`openId` |
+| Payload | `sub`（用户 ID） |
 
 认证校验流程：
 
@@ -131,7 +131,16 @@ JWT 配置：
 - Auth tag：随密文一起保存
 - Redis TTL：7200 秒
 
-Redis value 格式：
+Redis value 为 JSON 字符串，例如：
+
+```json
+{
+  "userId": "user-id",
+  "sessionKey": "{iv}:{encrypted}:{authTag}"
+}
+```
+
+其中 `sessionKey` 字段是 AES-256-GCM 加密后的微信 `session_key`，密文格式为：
 
 ```text
 {iv}:{encrypted}:{authTag}

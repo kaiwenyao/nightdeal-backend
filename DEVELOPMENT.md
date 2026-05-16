@@ -152,7 +152,7 @@ Socket.IO 网关位于 `/room` namespace，允许 Engine.IO 3 客户端连接，
 
 | Key | 类型 | TTL | 用途 |
 | --- | --- | --- | --- |
-| `session:{userId}` | String | 7200 秒 | 加密后的微信 `session_key` |
+| `session:{userId}` | String | 7200 秒 | JSON：`{ userId, sessionKey }`，`sessionKey` 为加密后的微信 `session_key` |
 | `room:{code}` | Hash | 86400 秒 | 房间状态、房主、人数、人数上限、最后活跃时间 |
 | `room:{code}:offline:{userId}` | String | 3600 秒 | 玩家离线时间戳 |
 | `ws-rate:user:{userId}` | String counter | 1 秒 | WebSocket 用户限流 |
@@ -305,29 +305,29 @@ Avalon 支持的角色配置字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `merlin` | Boolean | 默认为 `true` |
+| `merlin` | Boolean | 是否启用梅林 |
 | `percival` | Boolean | 派西维尔 |
 | `morgana` | Boolean | 莫甘娜 |
-| `mordred` | Boolean | 默认为 `false` |
-| `oberon` | Boolean | 默认为 `false` |
+| `mordred` | Boolean | 莫德雷德 |
+| `oberon` | Boolean | 奥伯伦 |
 | `assassin` | Boolean | 刺客 |
-| `loyalServants` | Integer | 0 到 10 |
-| `minions` | Integer | 0 到 10 |
+| `loyalServants` | Integer | 忠臣数量，0 到 10 |
+| `minions` | Integer | 爪牙数量，0 到 10 |
 
-创建房间未传 `roleConfig` 时使用 `getDefaultConfig(maxPlayers)`。角色分配使用 `crypto.randomInt` 洗牌。
+Zod schema 中上述布尔字段默认均为 `false`；创建房间未传 `roleConfig` 时，服务端会使用 `getDefaultConfig(maxPlayers)` 的标准预设（通常包含梅林、派西维尔、莫甘娜、刺客等）。角色分配使用 `crypto.randomInt` 洗牌。
 
 ### 10.2 SGS
 
-SGS 支持 2 到 8 人。当前实现的配置字段和返回角色名：
+SGS 支持 2 到 8 人。`roleConfig` 中各字段为**数量**（整数），开局后写入 `RoomPlayer.role` 的中文名如下：
 
-| 配置字段 | 返回角色名 | 阵营 |
-| --- | --- | --- |
-| `monarch` | 主公 | `monarch` |
-| `loyalist` | 忠臣 | `monarch` |
-| `rebel` | 反贼 | `rebel` |
-| `traitor` | 内奸 | `traitor` |
+| 配置字段 | 含义 | 分配角色名 | 阵营 |
+| --- | --- | --- | --- |
+| `monarch` | 主公数量（0 或 1） | 主公 | `monarch` |
+| `loyalist` | 忠臣数量 | 忠臣 | `monarch` |
+| `rebel` | 反贼数量 | 反贼 | `rebel` |
+| `traitor` | 内奸数量 | 内奸 | `traitor` |
 
-SGS 配置通过 `sgsRoleConfigSchema` 校验，角色分配同样使用 `crypto.randomInt`。
+SGS 配置通过 `SgsRoleConfigSchema` 校验，角色分配同样使用 `crypto.randomInt`。
 
 当前没有 REST 或 WebSocket 的 restart 接口；再次开局应先结束当前游戏，使房间回到 `WAITING`。
 
@@ -371,8 +371,8 @@ SGS 配置通过 `sgsRoleConfigSchema` 校验，角色分配同样使用 `crypto
 | `POST` | `/api/rooms/:code/start` | 是 | 开始游戏 |
 | `POST` | `/api/rooms/:code/end` | 是 | 结束游戏 |
 | `POST` | `/api/rooms/:code/kick` | 是 | 房主踢人 |
-| `PATCH` | `/api/rooms/:code/settings` | 是 | 更新房间设置 |
-| `PUT` | `/api/rooms/:code/settings` | 是 | 更新房间设置，兼容入口 |
+| `PATCH` | `/api/rooms/:code/settings` | 是 | 更新房间设置；成功后广播 `room:settings-updated` 与 `room:state` |
+| `PUT` | `/api/rooms/:code/settings` | 是 | 更新房间设置，兼容入口；行为同 `PATCH` |
 | `GET` | `/api/rooms/:code/my-role` | 是 | 获取自己的角色 |
 
 ## 12. WebSocket API

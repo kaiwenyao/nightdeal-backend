@@ -116,7 +116,7 @@ curl http://localhost:3000/api/health
 | `CORS_ORIGIN` | 可选，允许的 HTTP / WebSocket 来源 |
 | `CORS_CREDENTIALS` | 可选，设置为 `false` 时关闭 HTTP credentials |
 
-生产环境不要使用示例密钥。`SESSION_ENCRYPTION_KEY` 必须解析为 32 字节。
+生产环境不要使用示例密钥。`SESSION_ENCRYPTION_KEY` 建议至少 32 字符；不足 32 字符时服务端会零填充到 32 字节（会记录告警，生产环境应使用完整长度的随机密钥）。
 
 ## 项目结构
 
