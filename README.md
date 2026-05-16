@@ -1,6 +1,8 @@
 # NightDeal Backend
 
-NightDeal 后端是微信小程序游戏房间服务，当前支持 Avalon 和 SGS 两种游戏类型。服务基于 NestJS、PostgreSQL、Redis 和 Socket.IO 构建。
+NightDeal 后端是微信小程序游戏房间服务，当前支持 Avalon 和 SGS 两种游戏类型的通用房间、角色配置和角色分配。服务基于 NestJS、PostgreSQL、Redis 和 Socket.IO 构建。
+
+> 当前 Avalon 只实现房间生命周期和身份分配，尚未实现组队、公投、任务、刺杀等完整阿瓦隆对局状态机。
 
 ## 技术栈
 
@@ -135,6 +137,7 @@ nightdeal-backend/
 │   ├── migrations/
 │   └── generated/prisma/      # Prisma Client 输出目录
 ├── docs/
+│   ├── AVALON-DEVELOPMENT.md
 │   ├── SGS-DEVELOPMENT.md
 │   └── wechat-auth.md
 ├── DEVELOPMENT.md
@@ -257,6 +260,7 @@ io('/room', {
 | --- | --- |
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 当前后端实现、接口、数据模型、Redis、测试重点 |
 | [docs/wechat-auth.md](./docs/wechat-auth.md) | 微信登录、JWT、session 和头像上传 |
+| [docs/AVALON-DEVELOPMENT.md](./docs/AVALON-DEVELOPMENT.md) | 当前 Avalon 通用房间和身份分配实现，以及完整状态机未实现边界 |
 | [docs/SGS-DEVELOPMENT.md](./docs/SGS-DEVELOPMENT.md) | SGS 游戏模式实现 |
 
 ## 提交前检查
