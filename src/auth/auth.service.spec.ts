@@ -58,6 +58,36 @@ describe('AuthService', () => {
     } as Response);
   }
 
+  function buildService(sessionEncryptionKey: unknown): AuthService {
+    const config = {
+      get: jest.fn((key: string) =>
+        key === 'SESSION_ENCRYPTION_KEY' ? sessionEncryptionKey : undefined,
+      ),
+    };
+    return new AuthService(
+      prisma as unknown as PrismaService,
+      redis as unknown as RedisService,
+      config as unknown as ConfigService,
+      jwtService as unknown as JwtService,
+    );
+  }
+
+  describe('constructor SESSION_ENCRYPTION_KEY handling', () => {
+    it('throws when SESSION_ENCRYPTION_KEY is missing', () => {
+      expect(() => buildService(undefined)).toThrow('SESSION_ENCRYPTION_KEY is required');
+    });
+
+    it('throws when SESSION_ENCRYPTION_KEY encodes to fewer than 32 bytes', () => {
+      expect(() => buildService('short-key')).toThrow(
+        'SESSION_ENCRYPTION_KEY must encode to at least 32 bytes.',
+      );
+    });
+
+    it('accepts a key whose UTF-8 encoding is at least 32 bytes', () => {
+      expect(() => buildService('12345678901234567890123456789012')).not.toThrow();
+    });
+  });
+
   it('rejects a WeChat response without openid', async () => {
     mockWeChatResponse({ session_key: 'session-key' });
 
