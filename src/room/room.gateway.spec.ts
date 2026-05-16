@@ -281,10 +281,11 @@ describe('RoomGateway', () => {
         roleConfig: { loyalServants: 4 },
       });
 
-      expect(mockClient.to).toHaveBeenCalledWith('ABCDEF');
-      expect(mockClient.emit).toHaveBeenCalledWith('room:settings-updated', expect.objectContaining({
-        maxPlayers: 8,
-      }));
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        'room:settings-updated',
+        expect.objectContaining({ maxPlayers: 8 }),
+      );
     });
 
     it('emits error for invalid settings', async () => {
@@ -301,6 +302,23 @@ describe('RoomGateway', () => {
         code: 'ROOM_ERROR',
         message: '角色配置格式无效',
       });
+    });
+  });
+
+  describe('notifyClientsAfterSettingsUpdate', () => {
+    it('emits settings-updated then room:state', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
+
+      await gateway.notifyClientsAfterSettingsUpdate('ABCDEF', 8, mockRoom.roleConfig);
+
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:settings-updated', {
+        maxPlayers: 8,
+        roleConfig: mockRoom.roleConfig,
+      });
+      expect(broadcastSpy).toHaveBeenCalledWith('ABCDEF');
     });
   });
 

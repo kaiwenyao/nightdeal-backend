@@ -184,6 +184,16 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.server.to(roomCode).emit('room:ended', { status: 'WAITING' });
   }
 
+  /** After settings update (WebSocket or HTTP): settings payload then full room state. */
+  async notifyClientsAfterSettingsUpdate(
+    roomCode: string,
+    maxPlayers: number,
+    roleConfig: RoomInfo['roleConfig'],
+  ): Promise<void> {
+    this.server.to(roomCode).emit('room:settings-updated', { maxPlayers, roleConfig });
+    await this.broadcastRoomState(roomCode);
+  }
+
   /** After start succeeds (WebSocket or HTTP): per-player roles + full room state. */
   async notifyClientsAfterStart(
     roomCode: string,
@@ -332,12 +342,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Broadcast to all room members including sender
-    const maxPlayers = (result as RoomInfo).maxPlayers;
-    const roleConfig = (result as RoomInfo).roleConfig;
-    client.to(payload.roomCode).emit('room:settings-updated', { maxPlayers, roleConfig });
-    client.emit('room:settings-updated', { maxPlayers, roleConfig });
-    await this.broadcastRoomState(payload.roomCode);
+    const updated = result as RoomInfo;
+    await this.notifyClientsAfterSettingsUpdate(
+      payload.roomCode,
+      updated.maxPlayers,
+      updated.roleConfig,
+    );
   }
 
   @SubscribeMessage('player:update')
