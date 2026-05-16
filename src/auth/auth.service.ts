@@ -13,6 +13,10 @@ interface WeChatSessionResponse {
   errmsg?: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 @Injectable()
 export class AuthService {
   private readonly encryptionKey: Buffer;
@@ -116,10 +120,10 @@ export class AuthService {
     const timeoutMs = this.config.get<number>('WX_LOGIN_TIMEOUT_MS') || 8000;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    let data: WeChatSessionResponse;
+    let data: unknown;
     try {
       const resp = await fetch(url, { signal: controller.signal });
-      data = (await resp.json()) as WeChatSessionResponse;
+      data = await resp.json();
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new GatewayTimeoutException('微信登录请求超时，请稍后重试');
@@ -129,12 +133,22 @@ export class AuthService {
       clearTimeout(timeout);
     }
 
+    if (!isRecord(data)) {
+      this.logger.warn('WeChat login failed: invalid response shape');
+      throw new WeChatApiException('微信登录失败，请重试');
+    }
+
     if (data.errcode) {
       this.logger.warn(`WeChat login failed: errcode=${data.errcode}, errmsg=${data.errmsg}`);
       throw new WeChatApiException('微信登录失败，请重试');
     }
 
-    if (!data.openid || !data.session_key) {
+    if (
+      typeof data.openid !== 'string'
+      || data.openid.trim() === ''
+      || typeof data.session_key !== 'string'
+      || data.session_key.trim() === ''
+    ) {
       this.logger.warn('WeChat login failed: missing openid or session_key');
       throw new WeChatApiException('微信登录失败，请重试');
     }

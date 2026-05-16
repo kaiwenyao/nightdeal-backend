@@ -52,7 +52,7 @@ describe('AuthService', () => {
     jest.restoreAllMocks();
   });
 
-  function mockWeChatResponse(body: Record<string, unknown>) {
+  function mockWeChatResponse(body: unknown) {
     fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       json: async () => body,
     } as Response);
@@ -68,6 +68,20 @@ describe('AuthService', () => {
 
   it('rejects a WeChat response without session_key', async () => {
     mockWeChatResponse({ openid: 'open-id' });
+
+    await expect(service.login('wx-code')).rejects.toBeInstanceOf(WeChatApiException);
+    expect(prisma.user.upsert).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['null response', null],
+    ['empty openid', { openid: '', session_key: 'session-key' }],
+    ['non-string openid', { openid: {}, session_key: 'session-key' }],
+    ['empty session_key', { openid: 'open-id', session_key: '' }],
+    ['non-string session_key', { openid: 'open-id', session_key: [] }],
+  ])('rejects a WeChat response with %s', async (_case, body) => {
+    mockWeChatResponse(body);
 
     await expect(service.login('wx-code')).rejects.toBeInstanceOf(WeChatApiException);
     expect(prisma.user.upsert).not.toHaveBeenCalled();
