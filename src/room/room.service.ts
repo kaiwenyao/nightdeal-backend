@@ -465,6 +465,14 @@ export class RoomService {
         return { error: 'SGS 角色配置格式无效: ' + errorMessages };
       }
       const sgsConfig = parseResult.data;
+      // Validate role count before assignment so a mismatch surfaces as a
+      // clean business error, consistent with the Avalon branch below.
+      // Without this, assignSgsRoles() throws and the caller returns HTTP 500.
+      const totalRoles = sgsConfig.monarch + sgsConfig.loyalist
+        + sgsConfig.rebel + sgsConfig.traitor;
+      if (totalRoles !== players.length) {
+        return { error: `角色总数(${totalRoles})与玩家数(${players.length})不匹配` };
+      }
       assignments = assignSgsRoles(
         players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
         sgsConfig,

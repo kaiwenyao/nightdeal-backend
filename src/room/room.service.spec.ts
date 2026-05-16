@@ -438,6 +438,42 @@ describe('RoomService', () => {
     });
   });
 
+  describe('startGame', () => {
+    const sgsRoom = {
+      id: 'room-1',
+      code: 'ABCDEF',
+      hostId: 'host-1',
+      status: 'WAITING' as const,
+      gameType: GameType.SGS,
+      roleConfig: { monarch: 1, loyalist: 1, rebel: 2, traitor: 1 },
+      maxPlayers: 5,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    function buildPlayers(count: number) {
+      return Array.from({ length: count }, (_, i) => ({
+        id: `p-${i + 1}`,
+        roomId: 'room-1',
+        userId: `u-${i + 1}`,
+        seatNo: i + 1,
+        role: null,
+        joinedAt: new Date(),
+        user: { id: `u-${i + 1}`, nickName: `n${i + 1}`, avatarUrl: '' },
+      }));
+    }
+
+    it('SGS room with fewer players than role total → returns clean error, not a throw', async () => {
+      // Room capacity 5 (role config sums to 5) but only 3 players joined.
+      mockPrisma.room.findUnique.mockResolvedValue(sgsRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(buildPlayers(3));
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: '角色总数(5)与玩家数(3)不匹配' });
+    });
+  });
+
   describe('joinRoom status guards', () => {
     const mockWaitingRoom = {
       id: 'room-1',
