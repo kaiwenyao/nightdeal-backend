@@ -70,6 +70,7 @@ describe('RoomController', () => {
       notifyClientsAfterKick: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterStart: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterEnd: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterSettingsUpdate: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -108,6 +109,12 @@ describe('RoomController', () => {
         'user-1',
         { maxPlayers: 8, roleConfig: { merlin: true, loyalServants: 3, minions: 2 } },
       );
+      expect(roomGateway.notifyClientsAfterSettingsUpdate).toHaveBeenCalledWith(
+        'ABCDEF',
+        mockRoom.maxPlayers,
+        mockRoom.roleConfig,
+      );
+      expect(roomGateway.broadcastRoomState).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         id: 'room-1',
         code: 'ABCDEF',
