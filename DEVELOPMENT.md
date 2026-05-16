@@ -61,7 +61,7 @@ npm install
 | `CORS_ORIGIN` | 可选，HTTP 和 Socket.IO 允许的来源 |
 | `CORS_CREDENTIALS` | 可选，`false` 时关闭 HTTP credentials |
 
-`SESSION_ENCRYPTION_KEY` 在启动时由 Joi 校验为至少 32 个字符（见 `src/config/config.module.ts`）。`AuthService` 内部还会对不足 32 字符的密钥做零填充并记录告警，但生产环境应使用完整长度的随机密钥，不要依赖填充。
+`JWT_SECRET` 和 `SESSION_ENCRYPTION_KEY` 在启动时都由 Joi 校验为至少 32 个字符（见 `src/config/config.module.ts`），校验不通过会直接终止启动。`AuthService` 内部还保留了对不足 32 字符 `SESSION_ENCRYPTION_KEY` 的零填充兜底并记录告警，但因为 Joi 校验会先拦截启动，正常配置下该兜底不会触发；生产环境应使用完整长度的随机密钥。
 
 ### 3.3 常用命令
 

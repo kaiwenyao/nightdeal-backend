@@ -116,7 +116,7 @@ curl http://localhost:3000/api/health
 | `CORS_ORIGIN` | 可选，允许的 HTTP / WebSocket 来源 |
 | `CORS_CREDENTIALS` | 可选，设置为 `false` 时关闭 HTTP credentials |
 
-生产环境不要使用示例密钥。`SESSION_ENCRYPTION_KEY` 在启动时由 Joi 校验为至少 32 个字符；`AuthService` 对不足 32 字符的密钥另有零填充兜底并记录告警，但不应依赖该行为。
+生产环境不要使用示例密钥。`JWT_SECRET` 和 `SESSION_ENCRYPTION_KEY` 在启动时都由 Joi 校验为至少 32 个字符（见 `src/config/config.module.ts`），校验不通过会直接终止启动。`AuthService` 对不足 32 字符的 `SESSION_ENCRYPTION_KEY` 另有零填充兜底并记录告警，但 Joi 校验会先拦截启动，正常配置下该兜底不会触发，也不应依赖。
 
 ## 项目结构
 
