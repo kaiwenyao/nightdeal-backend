@@ -32,16 +32,16 @@ export class AuthService {
     if (!encryptionKeyStr) {
       throw new Error('SESSION_ENCRYPTION_KEY is required. Set it in environment variables.');
     }
-    if (encryptionKeyStr.length < 32) {
-      this.logger.warn(
-        `SESSION_ENCRYPTION_KEY is ${encryptionKeyStr.length} chars (minimum 32). `
-        +
-        'Key will be padded, which reduces encryption strength. '
-        +
-        'Please update your environment configuration.',
-      );
+    // config.module.ts validates SESSION_ENCRYPTION_KEY as >= 32 chars via Joi at
+    // startup, so the key is guaranteed long enough here. AES-256-GCM requires a
+    // 32-byte key; take the first 32 bytes of the UTF-8 encoding. The guard below
+    // fails fast with a clear message instead of letting createCipheriv throw an
+    // opaque "Invalid key length" error.
+    const keyBytes = Buffer.from(encryptionKeyStr, 'utf8');
+    if (keyBytes.length < 32) {
+      throw new Error('SESSION_ENCRYPTION_KEY must encode to at least 32 bytes.');
     }
-    this.encryptionKey = Buffer.from(encryptionKeyStr.padEnd(32, '0').slice(0, 32), 'utf8');
+    this.encryptionKey = keyBytes.subarray(0, 32);
   }
 
   async login(code: string): Promise<{ token: string; user: any }> {
