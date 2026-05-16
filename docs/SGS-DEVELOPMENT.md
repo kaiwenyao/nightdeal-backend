@@ -200,8 +200,8 @@ Payload：
 服务端会：
 
 1. 调用 `RoomService.startGame`
-2. 将公开房间状态广播给房间
-3. 逐个向 `user:{userId}` 发送 `room:started`
+2. 逐个向 `user:{userId}` 发送 `room:started`
+3. 再将公开房间状态广播给房间
 
 `room:started` 中只包含当前用户自己的角色。
 
@@ -224,8 +224,8 @@ Payload：
 成功后服务端广播：
 
 ```text
-room:ended
 room:state
+room:ended
 ```
 
 ## 8. 前端对接
