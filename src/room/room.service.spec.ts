@@ -464,13 +464,26 @@ describe('RoomService', () => {
     }
 
     it('SGS room with fewer players than role total → returns clean error, not a throw', async () => {
-      // Room capacity 5 (role config sums to 5) but only 3 players joined.
+      // Role config sums to 5 but only 3 players joined (totalRoles > players).
       mockPrisma.room.findUnique.mockResolvedValue(sgsRoom);
       mockPrisma.roomPlayer.findMany.mockResolvedValue(buildPlayers(3));
 
       const result = await service.startGame('ABCDEF', 'host-1');
 
       expect(result).toEqual({ error: '角色总数(5)与玩家数(3)不匹配' });
+    });
+
+    it('SGS room with more players than role total → returns clean error', async () => {
+      // Role config sums to 2 but 3 players joined (totalRoles < players).
+      mockPrisma.room.findUnique.mockResolvedValue({
+        ...sgsRoom,
+        roleConfig: { monarch: 1, loyalist: 0, rebel: 1, traitor: 0 },
+      });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(buildPlayers(3));
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: '角色总数(2)与玩家数(3)不匹配' });
     });
   });
 
