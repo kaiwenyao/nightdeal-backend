@@ -37,7 +37,7 @@
 | `OSS_AVATAR_KEY_PREFIX` | 头像对象 key 前缀 |
 | `AVATAR_URL_PREFIX` | 头像公开 URL 前缀，也是用户资料头像 URL 白名单前缀 |
 
-`SESSION_ENCRYPTION_KEY` 必须解析为 32 字节。生产环境不要使用示例值。
+`SESSION_ENCRYPTION_KEY` 在应用启动时由 Joi 校验为至少 32 个字符。生产环境不要使用示例值或弱口令。
 
 ## 3. 登录流程
 
@@ -257,7 +257,7 @@ user:{userId}
 
 - 不要把 `WX_SECRET`、`JWT_SECRET`、`SESSION_ENCRYPTION_KEY` 或 OSS 密钥提交到仓库
 - 生产环境必须使用强随机 `JWT_SECRET`
-- `SESSION_ENCRYPTION_KEY` 必须是 32 字节密钥
+- `SESSION_ENCRYPTION_KEY` 在启动时至少 32 个字符（Joi 校验）
 - 微信登录错误响应应继续保持泛化，不要向客户端暴露微信原始响应
 - 头像 URL 前缀变更时，需要同步检查 `AVATAR_URL_PREFIX` 和 OSS 公开访问策略
 - 如果未来加入手机号解密，需要先补齐 session_key 解密读取逻辑和对应测试

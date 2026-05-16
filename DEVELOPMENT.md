@@ -61,7 +61,7 @@ npm install
 | `CORS_ORIGIN` | 可选，HTTP 和 Socket.IO 允许的来源 |
 | `CORS_CREDENTIALS` | 可选，`false` 时关闭 HTTP credentials |
 
-`SESSION_ENCRYPTION_KEY` 必须能被 `Buffer.from(value)` 解析为 32 字节，否则 AES-256-GCM 加密会失败。
+`SESSION_ENCRYPTION_KEY` 在启动时由 Joi 校验为至少 32 个字符（见 `src/config/config.module.ts`）。`AuthService` 内部还会对不足 32 字符的密钥做零填充并记录告警，但生产环境应使用完整长度的随机密钥，不要依赖填充。
 
 ### 3.3 常用命令
 
@@ -113,7 +113,7 @@ Socket.IO 网关位于 `/room` namespace，允许 Engine.IO 3 客户端连接，
 | --- | --- |
 | `code` | 6 位大写字母房间码，唯一 |
 | `hostId` | 房主用户 ID |
-| `status` | `WAITING`、`PLAYING`、`FINISHED` |
+| `status` | `WAITING`、`PLAYING`（结束本局后回到 `WAITING`） |
 | `gameType` | `AVALON` 或 `SGS` |
 | `roleConfig` | JSON 角色配置 |
 | `maxPlayers` | 最大玩家数 |
@@ -181,7 +181,7 @@ Socket.IO 网关位于 `/room` namespace，允许 Engine.IO 3 客户端连接，
 
 ### 7.2 JWT 校验
 
-HTTP 接口使用 `JwtAuthGuard`。WebSocket 使用 `WsJwtGuard`，从以下位置读取 token：
+HTTP 接口使用 `AuthGuard`。WebSocket 使用 `WsJwtGuard`，从以下位置读取 token：
 
 - `handshake.auth.token`
 - `Authorization: Bearer <token>`

@@ -48,8 +48,7 @@ export type GameType = (typeof GameType)[keyof typeof GameType]
 
 export const RoomStatus: {
   WAITING: 'WAITING',
-  PLAYING: 'PLAYING',
-  FINISHED: 'FINISHED'
+  PLAYING: 'PLAYING'
 };
 
 export type RoomStatus = (typeof RoomStatus)[keyof typeof RoomStatus]

@@ -242,8 +242,6 @@ export class RoomService {
     const room = await this.getRoom(roomCode);
     if (!room) return { error: '房间不存在' };
     if (room.status === 'PLAYING') return { error: '游戏已开始，无法加入' };
-    if (room.status === 'FINISHED') return { error: '房间已结束' };
-
     const existingPlayer = await this.getPlayer(roomCode, userId);
     if (existingPlayer) return { error: '你已在房间中' };
 

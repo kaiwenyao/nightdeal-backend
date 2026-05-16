@@ -457,11 +457,6 @@ describe('RoomService', () => {
       expect(result).toEqual({ error: '游戏已开始，无法加入' });
     });
 
-    it('rejects join when FINISHED', async () => {
-      mockPrisma.room.findUnique.mockResolvedValue({ ...mockWaitingRoom, status: 'FINISHED' });
-      const result = await service.joinRoom('ABCDEF', 'u-new');
-      expect(result).toEqual({ error: '房间已结束' });
-    });
   });
 
   describe('kickPlayer', () => {

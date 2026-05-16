@@ -102,11 +102,6 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    if (room.status === 'FINISHED') {
-      client.emit('room:error', { code: WsErrorCode.ROOM_FINISHED, message: '房间已结束' });
-      return;
-    }
-
     const existingPlayer = await this.roomService.getPlayer(payload.roomCode, userId);
     if (existingPlayer) {
       client.join(payload.roomCode);

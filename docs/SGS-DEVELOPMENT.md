@@ -37,7 +37,7 @@ SGS 使用现有 `Room` 表：
 | `gameType` | SGS 房间写入 `SGS` |
 | `roleConfig` | SGS 角色配置 JSON |
 | `maxPlayers` | SGS 允许 2 到 8 |
-| `status` | `WAITING`、`PLAYING`、`FINISHED` |
+| `status` | `WAITING`、`PLAYING`（结束本局后回到 `WAITING`） |
 
 创建房间时如果未传 `maxPlayers`，SGS 默认使用 2 人。
 
@@ -235,7 +235,7 @@ room:state
 | 页面 | 说明 |
 | --- | --- |
 | `pages/game-select` | 选择 Avalon 或 SGS |
-| `pages/room-settings` | 配置房间游戏类型、人数和角色配置 |
+| `pages/room-settings` | 配置人数和角色（不切换 `gameType`，类型在创建房间时确定） |
 | `pages/room` | 房间等待和开局入口 |
 | `pages/game` | 展示当前玩家角色 |
 
