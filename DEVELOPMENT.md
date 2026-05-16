@@ -76,7 +76,7 @@ npm run prisma:migrate
 npm run prisma:deploy
 ```
 
-`start` 和 `start:dev` 会先执行 Prisma generate。
+`start` 和 `start:dev` 会通过 `prestart` / `prestart:dev` 先执行 `prisma migrate deploy && prisma generate`。
 
 ## 4. 应用启动行为
 
