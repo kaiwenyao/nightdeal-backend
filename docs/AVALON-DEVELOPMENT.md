@@ -49,7 +49,7 @@
 | `gameType` | Avalon 房间写入 `AVALON` |
 | `roleConfig` | Avalon 角色配置 JSON |
 | `maxPlayers` | 允许 5 到 10 |
-| `status` | `WAITING`、`PLAYING`、`FINISHED`，当前结束游戏会回到 `WAITING` |
+| `status` | `WAITING`、`PLAYING`（结束本局后回到 `WAITING`） |
 
 ### 3.2 `RoomPlayer`
 

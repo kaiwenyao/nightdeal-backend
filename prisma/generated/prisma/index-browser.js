@@ -184,8 +184,7 @@ exports.Prisma.NullsOrder = {
 };
 exports.RoomStatus = exports.$Enums.RoomStatus = {
   WAITING: 'WAITING',
-  PLAYING: 'PLAYING',
-  FINISHED: 'FINISHED'
+  PLAYING: 'PLAYING'
 };
 
 exports.GameType = exports.$Enums.GameType = {
