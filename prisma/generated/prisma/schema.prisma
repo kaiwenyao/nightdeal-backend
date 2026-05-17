@@ -27,15 +27,16 @@ enum GameType {
 }
 
 model Room {
-  id         String     @id @default(cuid())
-  code       String     @unique @db.VarChar(6)
-  hostId     String
-  status     RoomStatus @default(WAITING)
-  gameType   GameType   @default(AVALON)
-  roleConfig Json       @default("{}")
-  maxPlayers Int        @default(10)
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  id           String     @id @default(cuid())
+  code         String     @unique @db.VarChar(6)
+  hostId       String
+  status       RoomStatus @default(WAITING)
+  gameType     GameType   @default(AVALON)
+  roleConfig   Json       @default("{}")
+  maxPlayers   Int        @default(10)
+  isRandomSeat Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   host    User         @relation("RoomHost", fields: [hostId], references: [id])
   players RoomPlayer[]

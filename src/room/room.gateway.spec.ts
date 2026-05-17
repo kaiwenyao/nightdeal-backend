@@ -32,6 +32,7 @@ describe('RoomGateway', () => {
       minions: 1,
     },
     maxPlayers: 5,
+    isRandomSeat: false,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
   };
@@ -279,6 +280,7 @@ describe('RoomGateway', () => {
         roomCode: 'ABCDEF',
         maxPlayers: 8,
         roleConfig: { loyalServants: 4 },
+        isRandomSeat: false,
       });
 
       expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
@@ -311,12 +313,13 @@ describe('RoomGateway', () => {
       roomService.getPlayers.mockResolvedValue(mockPlayers);
       const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
 
-      await gateway.notifyClientsAfterSettingsUpdate('ABCDEF', 8, mockRoom.roleConfig);
+      await gateway.notifyClientsAfterSettingsUpdate('ABCDEF', 8, mockRoom.roleConfig, false);
 
       expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:settings-updated', {
         maxPlayers: 8,
         roleConfig: mockRoom.roleConfig,
+        isRandomSeat: false,
       });
       expect(broadcastSpy).toHaveBeenCalledWith('ABCDEF');
     });

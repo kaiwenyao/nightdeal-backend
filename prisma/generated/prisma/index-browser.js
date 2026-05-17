@@ -137,6 +137,7 @@ exports.Prisma.RoomScalarFieldEnum = {
   gameType: 'gameType',
   roleConfig: 'roleConfig',
   maxPlayers: 'maxPlayers',
+  isRandomSeat: 'isRandomSeat',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 };

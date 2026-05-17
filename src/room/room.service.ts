@@ -23,6 +23,7 @@ interface RoomBaseInfo {
   hostId: string;
   status: string;
   maxPlayers: number;
+  isRandomSeat: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -150,6 +151,7 @@ export class RoomService {
     roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>,
     maxPlayers?: number,
     gameType: GameType = GameType.AVALON,
+    isRandomSeat?: boolean,
   ): Promise<RoomInfo | { error: string }> {
     const resolvedMaxPlayers = maxPlayers || (gameType === GameType.SGS ? 2 : 5);
     const isSgs = gameType === GameType.SGS;
@@ -203,6 +205,7 @@ export class RoomService {
           gameType: isSgs ? GameType.SGS : GameType.AVALON,
           roleConfig: config,
           maxPlayers: resolvedMaxPlayers,
+          isRandomSeat: isRandomSeat ?? false,
         },
       });
 
@@ -387,10 +390,23 @@ export class RoomService {
     if (!room) return { error: '房间不存在' };
     if (room.hostId !== hostId) return { error: '仅房主可以开始游戏' };
 
-    const players = await this.getPlayers(roomCode);
+    let players = await this.getPlayers(roomCode);
     const minPlayers = room.gameType === GameType.SGS ? 2 : 5;
     if (players.length < minPlayers) {
       return { error: `至少需要 ${minPlayers} 名玩家` };
+    }
+
+    // Shuffle seat numbers if random seat is enabled
+    if (room.isRandomSeat) {
+      const shuffledPlayers = [...players];
+      for (let i = shuffledPlayers.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffledPlayers[i], shuffledPlayers[j]] = [shuffledPlayers[j], shuffledPlayers[i]];
+      }
+      for (let i = 0; i < shuffledPlayers.length; i++) {
+        shuffledPlayers[i] = { ...shuffledPlayers[i], seatNo: i + 1 };
+      }
+      players = shuffledPlayers;
     }
 
     const assignmentResult = this.computeRoleAssignments(room, players);
@@ -402,6 +418,16 @@ export class RoomService {
       const currentRoom = await tx.room.findUnique({ where: { id: room.id } });
       if (!currentRoom || currentRoom.status !== 'WAITING') {
         throw new Error('游戏已开始');
+      }
+
+      // Persist shuffled seat numbers before role assignments
+      if (room.isRandomSeat) {
+        for (const player of players) {
+          await tx.roomPlayer.updateMany({
+            where: { roomId: room.id, userId: player.userId },
+            data: { seatNo: player.seatNo },
+          });
+        }
       }
 
       await this.persistAssignments(tx, room.id, assignments);
@@ -568,7 +594,7 @@ export class RoomService {
   async updateRoomSettings(
     roomCode: string,
     hostId: string,
-    data: { maxPlayers?: number; roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig> },
+    data: { maxPlayers?: number; roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>; isRandomSeat?: boolean },
   ): Promise<RoomInfo | { error: string }> {
     const room = await this.getRoom(roomCode);
     if (!room) {
@@ -581,7 +607,7 @@ export class RoomService {
       return { error: '游戏已开始，无法修改设置' };
     }
 
-    const updates: Partial<{ maxPlayers: number; roleConfig: RoleConfig | SgsRoleConfig }> = {};
+    const updates: Partial<{ maxPlayers: number; roleConfig: RoleConfig | SgsRoleConfig; isRandomSeat: boolean }> = {};
 
     if (typeof data.maxPlayers !== 'undefined') {
       const playerCount = await this.getPlayerCount(roomCode);
@@ -657,8 +683,12 @@ export class RoomService {
       }
     }
 
+    if (typeof data.isRandomSeat !== 'undefined') {
+      updates.isRandomSeat = data.isRandomSeat;
+    }
+
     // If nothing to update, return current room info
-    if (updates.maxPlayers === undefined && updates.roleConfig === undefined) {
+    if (updates.maxPlayers === undefined && updates.roleConfig === undefined && updates.isRandomSeat === undefined) {
       const current = await this.getRoom(roomCode);
       return current as RoomInfo;
     }
