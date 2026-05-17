@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum, Validate, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsString, Length, Matches, IsOptional, IsNumber, Min, Max, IsEnum, Validate, IsNotEmpty, MaxLength, IsBoolean } from 'class-validator';
 import { GameType } from '../../../prisma/generated/prisma/client.js';
 import { PartialRoleConfig } from '../role-config.schema';
 import { SgsRoleConfig } from '../sgs-role-assigner';
@@ -63,6 +63,10 @@ export class CreateRoomDto {
   @Min(2)
   @Max(10)
   maxPlayers?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isRandomSeat?: boolean;
 }
 
 export class UpdatePlayerDto {
@@ -92,6 +96,10 @@ export class UpdateRoomSettingsDto {
 
   @IsOptional()
   roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>;
+
+  @IsOptional()
+  @IsBoolean()
+  isRandomSeat?: boolean;
 }
 
 // WebSocket payload for updating room settings
@@ -111,4 +119,8 @@ export class SettingsUpdateDto {
 
   @IsOptional()
   roleConfig?: PartialRoleConfig | Partial<SgsRoleConfig>;
+
+  @IsOptional()
+  @IsBoolean()
+  isRandomSeat?: boolean;
 }

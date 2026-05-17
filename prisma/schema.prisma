@@ -34,6 +34,7 @@ model Room {
   gameType   GameType   @default(AVALON)
   roleConfig Json       @default("{}")
   maxPlayers Int        @default(10)
+  isRandomSeat Boolean  @default(false)
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 

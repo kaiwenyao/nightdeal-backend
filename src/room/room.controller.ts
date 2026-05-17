@@ -37,6 +37,7 @@ export class RoomController {
       dto.roleConfig,
       dto.maxPlayers,
       dto.gameType,
+      dto.isRandomSeat,
     );
     if ('error' in result) {
       throw new BadRequestException(result.error);
@@ -49,6 +50,7 @@ export class RoomController {
       gameType: room.gameType,
       roleConfig: room.roleConfig,
       maxPlayers: room.maxPlayers,
+      isRandomSeat: room.isRandomSeat,
       createdAt: room.createdAt,
     };
   }
@@ -158,6 +160,7 @@ export class RoomController {
     const result = await this.roomService.updateRoomSettings(code, req.user.id, {
       maxPlayers: dto.maxPlayers,
       roleConfig: dto.roleConfig,
+      isRandomSeat: dto.isRandomSeat,
     });
     if ('error' in result) {
       const err = (result as { error: string }).error;
@@ -169,6 +172,7 @@ export class RoomController {
       code,
       result.maxPlayers,
       result.roleConfig,
+      result.isRandomSeat,
     );
     return this.buildRoomDetail(code);
   }
@@ -241,6 +245,7 @@ export class RoomController {
       gameType: room.gameType,
       roleConfig: room.roleConfig,
       maxPlayers: room.maxPlayers,
+      isRandomSeat: room.isRandomSeat,
       host: host
         ? {
             id: host.user.id,

@@ -2390,6 +2390,7 @@ export namespace Prisma {
     status: $Enums.RoomStatus | null
     gameType: $Enums.GameType | null
     maxPlayers: number | null
+    isRandomSeat: boolean | null
     createdAt: Date | null
     updatedAt: Date | null
   }
@@ -2401,6 +2402,7 @@ export namespace Prisma {
     status: $Enums.RoomStatus | null
     gameType: $Enums.GameType | null
     maxPlayers: number | null
+    isRandomSeat: boolean | null
     createdAt: Date | null
     updatedAt: Date | null
   }
@@ -2413,6 +2415,7 @@ export namespace Prisma {
     gameType: number
     roleConfig: number
     maxPlayers: number
+    isRandomSeat: number
     createdAt: number
     updatedAt: number
     _all: number
@@ -2434,6 +2437,7 @@ export namespace Prisma {
     status?: true
     gameType?: true
     maxPlayers?: true
+    isRandomSeat?: true
     createdAt?: true
     updatedAt?: true
   }
@@ -2445,6 +2449,7 @@ export namespace Prisma {
     status?: true
     gameType?: true
     maxPlayers?: true
+    isRandomSeat?: true
     createdAt?: true
     updatedAt?: true
   }
@@ -2457,6 +2462,7 @@ export namespace Prisma {
     gameType?: true
     roleConfig?: true
     maxPlayers?: true
+    isRandomSeat?: true
     createdAt?: true
     updatedAt?: true
     _all?: true
@@ -2556,6 +2562,7 @@ export namespace Prisma {
     gameType: $Enums.GameType
     roleConfig: JsonValue
     maxPlayers: number
+    isRandomSeat: boolean
     createdAt: Date
     updatedAt: Date
     _count: RoomCountAggregateOutputType | null
@@ -2587,6 +2594,7 @@ export namespace Prisma {
     gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
+    isRandomSeat?: boolean
     createdAt?: boolean
     updatedAt?: boolean
     host?: boolean | UserDefaultArgs<ExtArgs>
@@ -2603,6 +2611,7 @@ export namespace Prisma {
     gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
+    isRandomSeat?: boolean
     createdAt?: boolean
     updatedAt?: boolean
     host?: boolean | UserDefaultArgs<ExtArgs>
@@ -2616,6 +2625,7 @@ export namespace Prisma {
     gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
+    isRandomSeat?: boolean
     createdAt?: boolean
     updatedAt?: boolean
     host?: boolean | UserDefaultArgs<ExtArgs>
@@ -2629,11 +2639,12 @@ export namespace Prisma {
     gameType?: boolean
     roleConfig?: boolean
     maxPlayers?: boolean
+    isRandomSeat?: boolean
     createdAt?: boolean
     updatedAt?: boolean
   }
 
-  export type RoomOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "code" | "hostId" | "status" | "gameType" | "roleConfig" | "maxPlayers" | "createdAt" | "updatedAt", ExtArgs["result"]["room"]>
+  export type RoomOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "code" | "hostId" | "status" | "gameType" | "roleConfig" | "maxPlayers" | "isRandomSeat" | "createdAt" | "updatedAt", ExtArgs["result"]["room"]>
   export type RoomInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     host?: boolean | UserDefaultArgs<ExtArgs>
     players?: boolean | Room$playersArgs<ExtArgs>
@@ -2662,6 +2673,7 @@ export namespace Prisma {
       gameType: $Enums.GameType
       roleConfig: Prisma.JsonValue
       maxPlayers: number
+      isRandomSeat: boolean
       createdAt: Date
       updatedAt: Date
     }, ExtArgs["result"]["room"]>
@@ -3097,6 +3109,7 @@ export namespace Prisma {
     readonly gameType: FieldRef<"Room", 'GameType'>
     readonly roleConfig: FieldRef<"Room", 'Json'>
     readonly maxPlayers: FieldRef<"Room", 'Int'>
+    readonly isRandomSeat: FieldRef<"Room", 'Boolean'>
     readonly createdAt: FieldRef<"Room", 'DateTime'>
     readonly updatedAt: FieldRef<"Room", 'DateTime'>
   }
@@ -5777,6 +5790,7 @@ export namespace Prisma {
     gameType: 'gameType',
     roleConfig: 'roleConfig',
     maxPlayers: 'maxPlayers',
+    isRandomSeat: 'isRandomSeat',
     createdAt: 'createdAt',
     updatedAt: 'updatedAt'
   };
@@ -5937,6 +5951,13 @@ export namespace Prisma {
 
 
   /**
+   * Reference to a field of type 'Boolean'
+   */
+  export type BooleanFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Boolean'>
+    
+
+
+  /**
    * Reference to a field of type 'Float'
    */
   export type FloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Float'>
@@ -6027,6 +6048,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonFilter<"Room">
     maxPlayers?: IntFilter<"Room"> | number
+    isRandomSeat?: BoolFilter<"Room"> | boolean
     createdAt?: DateTimeFilter<"Room"> | Date | string
     updatedAt?: DateTimeFilter<"Room"> | Date | string
     host?: XOR<UserScalarRelationFilter, UserWhereInput>
@@ -6042,6 +6064,7 @@ export namespace Prisma {
     gameType?: SortOrder
     roleConfig?: SortOrder
     maxPlayers?: SortOrder
+    isRandomSeat?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
     host?: UserOrderByWithRelationInput
@@ -6060,6 +6083,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonFilter<"Room">
     maxPlayers?: IntFilter<"Room"> | number
+    isRandomSeat?: BoolFilter<"Room"> | boolean
     createdAt?: DateTimeFilter<"Room"> | Date | string
     updatedAt?: DateTimeFilter<"Room"> | Date | string
     host?: XOR<UserScalarRelationFilter, UserWhereInput>
@@ -6075,6 +6099,7 @@ export namespace Prisma {
     gameType?: SortOrder
     roleConfig?: SortOrder
     maxPlayers?: SortOrder
+    isRandomSeat?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
     _count?: RoomCountOrderByAggregateInput
@@ -6095,6 +6120,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeWithAggregatesFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonWithAggregatesFilter<"Room">
     maxPlayers?: IntWithAggregatesFilter<"Room"> | number
+    isRandomSeat?: BoolWithAggregatesFilter<"Room"> | boolean
     createdAt?: DateTimeWithAggregatesFilter<"Room"> | Date | string
     updatedAt?: DateTimeWithAggregatesFilter<"Room"> | Date | string
   }
@@ -6299,6 +6325,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     host: UserCreateNestedOneWithoutHostedRoomsInput
@@ -6314,6 +6341,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     players?: RoomPlayerUncheckedCreateNestedManyWithoutRoomInput
@@ -6327,6 +6355,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     host?: UserUpdateOneRequiredWithoutHostedRoomsNestedInput
@@ -6342,6 +6371,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     players?: RoomPlayerUncheckedUpdateManyWithoutRoomNestedInput
@@ -6356,6 +6386,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
   }
@@ -6367,6 +6398,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
@@ -6379,6 +6411,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
@@ -6652,6 +6685,11 @@ export namespace Prisma {
     not?: NestedIntFilter<$PrismaModel> | number
   }
 
+  export type BoolFilter<$PrismaModel = never> = {
+    equals?: boolean | BooleanFieldRefInput<$PrismaModel>
+    not?: NestedBoolFilter<$PrismaModel> | boolean
+  }
+
   export type UserScalarRelationFilter = {
     is?: UserWhereInput
     isNot?: UserWhereInput
@@ -6675,6 +6713,7 @@ export namespace Prisma {
     gameType?: SortOrder
     roleConfig?: SortOrder
     maxPlayers?: SortOrder
+    isRandomSeat?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
   }
@@ -6690,6 +6729,7 @@ export namespace Prisma {
     status?: SortOrder
     gameType?: SortOrder
     maxPlayers?: SortOrder
+    isRandomSeat?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
   }
@@ -6701,6 +6741,7 @@ export namespace Prisma {
     status?: SortOrder
     gameType?: SortOrder
     maxPlayers?: SortOrder
+    isRandomSeat?: SortOrder
     createdAt?: SortOrder
     updatedAt?: SortOrder
   }
@@ -6769,6 +6810,14 @@ export namespace Prisma {
     _sum?: NestedIntFilter<$PrismaModel>
     _min?: NestedIntFilter<$PrismaModel>
     _max?: NestedIntFilter<$PrismaModel>
+  }
+
+  export type BoolWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: boolean | BooleanFieldRefInput<$PrismaModel>
+    not?: NestedBoolWithAggregatesFilter<$PrismaModel> | boolean
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedBoolFilter<$PrismaModel>
+    _max?: NestedBoolFilter<$PrismaModel>
   }
 
   export type StringNullableFilter<$PrismaModel = never> = {
@@ -7048,6 +7097,10 @@ export namespace Prisma {
     divide?: number
   }
 
+  export type BoolFieldUpdateOperationsInput = {
+    set?: boolean
+  }
+
   export type UserUpdateOneRequiredWithoutHostedRoomsNestedInput = {
     create?: XOR<UserCreateWithoutHostedRoomsInput, UserUncheckedCreateWithoutHostedRoomsInput>
     connectOrCreate?: UserCreateOrConnectWithoutHostedRoomsInput
@@ -7243,6 +7296,11 @@ export namespace Prisma {
     not?: NestedEnumGameTypeFilter<$PrismaModel> | $Enums.GameType
   }
 
+  export type NestedBoolFilter<$PrismaModel = never> = {
+    equals?: boolean | BooleanFieldRefInput<$PrismaModel>
+    not?: NestedBoolFilter<$PrismaModel> | boolean
+  }
+
   export type NestedEnumRoomStatusWithAggregatesFilter<$PrismaModel = never> = {
     equals?: $Enums.RoomStatus | EnumRoomStatusFieldRefInput<$PrismaModel>
     in?: $Enums.RoomStatus[] | ListEnumRoomStatusFieldRefInput<$PrismaModel>
@@ -7311,6 +7369,14 @@ export namespace Prisma {
     gt?: number | FloatFieldRefInput<$PrismaModel>
     gte?: number | FloatFieldRefInput<$PrismaModel>
     not?: NestedFloatFilter<$PrismaModel> | number
+  }
+
+  export type NestedBoolWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: boolean | BooleanFieldRefInput<$PrismaModel>
+    not?: NestedBoolWithAggregatesFilter<$PrismaModel> | boolean
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedBoolFilter<$PrismaModel>
+    _max?: NestedBoolFilter<$PrismaModel>
   }
 
   export type NestedStringNullableFilter<$PrismaModel = never> = {
@@ -7387,6 +7453,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     players?: RoomPlayerCreateNestedManyWithoutRoomInput
@@ -7400,6 +7467,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     players?: RoomPlayerUncheckedCreateNestedManyWithoutRoomInput
@@ -7469,6 +7537,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFilter<"Room"> | $Enums.GameType
     roleConfig?: JsonFilter<"Room">
     maxPlayers?: IntFilter<"Room"> | number
+    isRandomSeat?: BoolFilter<"Room"> | boolean
     createdAt?: DateTimeFilter<"Room"> | Date | string
     updatedAt?: DateTimeFilter<"Room"> | Date | string
   }
@@ -7657,6 +7726,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     host: UserCreateNestedOneWithoutHostedRoomsInput
@@ -7671,6 +7741,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     games?: GameRecordUncheckedCreateNestedManyWithoutRoomInput
@@ -7724,6 +7795,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     host?: UserUpdateOneRequiredWithoutHostedRoomsNestedInput
@@ -7738,6 +7810,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     games?: GameRecordUncheckedUpdateManyWithoutRoomNestedInput
@@ -7781,6 +7854,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     host: UserCreateNestedOneWithoutHostedRoomsInput
@@ -7795,6 +7869,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
     players?: RoomPlayerUncheckedCreateNestedManyWithoutRoomInput
@@ -7823,6 +7898,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     host?: UserUpdateOneRequiredWithoutHostedRoomsNestedInput
@@ -7837,6 +7913,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     players?: RoomPlayerUncheckedUpdateManyWithoutRoomNestedInput
@@ -7849,6 +7926,7 @@ export namespace Prisma {
     gameType?: $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: number
+    isRandomSeat?: boolean
     createdAt?: Date | string
     updatedAt?: Date | string
   }
@@ -7868,6 +7946,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     players?: RoomPlayerUpdateManyWithoutRoomNestedInput
@@ -7881,6 +7960,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     players?: RoomPlayerUncheckedUpdateManyWithoutRoomNestedInput
@@ -7894,6 +7974,7 @@ export namespace Prisma {
     gameType?: EnumGameTypeFieldUpdateOperationsInput | $Enums.GameType
     roleConfig?: JsonNullValueInput | InputJsonValue
     maxPlayers?: IntFieldUpdateOperationsInput | number
+    isRandomSeat?: BoolFieldUpdateOperationsInput | boolean
     createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
     updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }

@@ -197,8 +197,13 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     roomCode: string,
     maxPlayers: number,
     roleConfig: RoomInfo['roleConfig'],
+    isRandomSeat?: boolean,
   ): Promise<void> {
-    this.server.to(roomCode).emit('room:settings-updated', { maxPlayers, roleConfig });
+    const payload: Record<string, unknown> = { maxPlayers, roleConfig };
+    if (typeof isRandomSeat === 'boolean') {
+      payload.isRandomSeat = isRandomSeat;
+    }
+    this.server.to(roomCode).emit('room:settings-updated', payload);
     await this.broadcastRoomState(roomCode);
   }
 
@@ -343,6 +348,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const result = await this.roomService.updateRoomSettings(payload.roomCode, userId, {
       maxPlayers: payload.maxPlayers,
       roleConfig: payload.roleConfig,
+      isRandomSeat: payload.isRandomSeat,
     });
 
     if (typeof result === 'object' && 'error' in result) {
@@ -355,6 +361,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       payload.roomCode,
       updated.maxPlayers,
       updated.roleConfig,
+      updated.isRandomSeat,
     );
   }
 
