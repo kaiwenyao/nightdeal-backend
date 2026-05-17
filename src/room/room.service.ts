@@ -420,8 +420,16 @@ export class RoomService {
         throw new Error('游戏已开始');
       }
 
-      // Persist shuffled seat numbers before role assignments
+      // Persist shuffled seat numbers before role assignments.
+      // Two-phase update avoids UNIQUE constraint violation on @@unique([roomId, seatNo]).
       if (room.isRandomSeat) {
+        const tempOffset = players.length + 1;
+        for (const player of players) {
+          await tx.roomPlayer.updateMany({
+            where: { roomId: room.id, userId: player.userId },
+            data: { seatNo: -(player.seatNo + tempOffset) },
+          });
+        }
         for (const player of players) {
           await tx.roomPlayer.updateMany({
             where: { roomId: room.id, userId: player.userId },
