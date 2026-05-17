@@ -99,7 +99,7 @@ session:{userId}
 | 网络错误 | 开发环境 HTTP 503，业务码 `50001`；生产环境 message 为「服务器内部错误」 |
 | 微信返回 `errcode` | 记录必要日志，向客户端返回泛化登录失败（`50002`） |
 | 缺少或非法 `openid` / `session_key` | 视为登录失败 |
-| `WX_APPID` / `WX_SECRET` 为空，或 `WX_SECRET` 含子串 `placeholder` | 登录失败（`.env.example` 中的 `your_wx_secret_here` **不会**触发占位检测） |
+| `WX_APPID` / `WX_SECRET` 为空，或 `WX_SECRET` 含子串 `placeholder` | 登录失败（含 `.env.example` 默认值 `your_wx_secret_here`） |
 
 服务端不把微信 `session_key`、`openid` 或微信原始错误细节直接暴露给客户端。
 

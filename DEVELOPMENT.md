@@ -456,7 +456,6 @@ io('/room', {
 | `code` | 典型场景 |
 | --- | --- |
 | `UNAUTHORIZED` | 消息处理时 token 无效（`WsJwtGuard`） |
-| `TOKEN_EXPIRED` | 连接握手时 token 无效或过期 |
 | `ROOM_NOT_FOUND` | 房间不存在 |
 | `GAME_ALREADY_STARTED` | 等待中房间已满或状态不允许加入 |
 | `ROOM_FULL` | 房间人数已满 |
