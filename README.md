@@ -213,12 +213,12 @@ npx prisma migrate reset
 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- |
 | `POST` | `/api/rooms` | 是 | 创建房间 |
-| `GET` | `/api/rooms/:code` | 是 | 获取房间详情 |
-| `POST` | `/api/rooms/:code/join` | 是 | 加入房间 |
+| `GET` | `/api/rooms/:code` | 是 | 获取房间详情（须为成员或房主） |
+| `POST` | `/api/rooms/:code/join` | 是 | 加入房间（广播 WebSocket，见 DEVELOPMENT.md） |
 | `POST` | `/api/rooms/:code/leave` | 是 | 离开房间 |
 | `POST` | `/api/rooms/:code/start` | 是 | 开始游戏 |
 | `POST` | `/api/rooms/:code/end` | 是 | 结束游戏 |
-| `POST` | `/api/rooms/:code/kick` | 是 | 房主踢人 |
+| `POST` | `/api/rooms/:code/kick` | 是 | 房主踢人，body：`{ "userId": "..." }` |
 | `PATCH` | `/api/rooms/:code/settings` | 是 | 更新房间设置 |
 | `PUT` | `/api/rooms/:code/settings` | 是 | 更新房间设置兼容入口 |
 | `GET` | `/api/rooms/:code/my-role` | 是 | 获取自己的角色 |
@@ -252,7 +252,9 @@ io('/room', {
 | `room:settings-update` | 更新房间设置 |
 | `player:update` | 更新当前用户昵称/头像并向所在房间广播 `player:updated` |
 
-服务端会通过 `room:state` 广播公开房间状态，并通过 `user:{userId}` 单独发送玩家自己的角色。
+服务端事件（摘要）：`room:state`、`room:started`、`room:ended`、`room:player-joined`、`room:player-left`、`room:offline`、`room:reconnected`、`room:settings-updated`、`player:updated`、`room:error`。
+
+角色下发：向 `user:{userId}` 发送 **`room:started`**，payload 为 `{ yourRole }`（不通过 `room:state` 暴露他人角色）。完整契约见 [DEVELOPMENT.md](./DEVELOPMENT.md) §12。
 
 ## 开发文档
 

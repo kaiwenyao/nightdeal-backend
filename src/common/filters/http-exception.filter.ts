@@ -42,7 +42,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ? exceptionResponse
       : (exceptionResponse as any).message || exception.message;
 
-    // Map HTTP exceptions to business error codes as documented in DEVELOPMENT.md §16.2
+    // Map HTTP exceptions to business error codes as documented in DEVELOPMENT.md §11
     let businessCode: number | null = null;
     if (exception instanceof BadRequestException) {
       businessCode = 40001;

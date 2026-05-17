@@ -108,7 +108,7 @@ Avalon 当前复用通用房间接口。
 | `POST` | `/api/rooms/:code/leave` | 离开房间；游戏中离开会标记离线 |
 | `POST` | `/api/rooms/:code/start` | 房主开局并分配角色 |
 | `POST` | `/api/rooms/:code/end` | 房主结束游戏，房间回到等待 |
-| `POST` | `/api/rooms/:code/kick` | 房主踢人，游戏中不可踢 |
+| `POST` | `/api/rooms/:code/kick` | 房主踢人，游戏中不可踢；REST body：`{ "userId": "..." }` |
 | `PATCH` / `PUT` | `/api/rooms/:code/settings` | 房主更新人数和角色配置 |
 | `GET` | `/api/rooms/:code/my-role` | 游戏中获取自己的角色 |
 

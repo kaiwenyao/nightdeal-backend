@@ -1,7 +1,7 @@
 import { WebSocketGateway, WebSocketServer, SubscribeMessage, ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
 import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters } from '@nestjs/common';
 import { Namespace, Socket } from 'socket.io';
-import { RoomService, RoomInfo } from './room.service';
+import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
 import { JoinRoomDto, LeaveRoomDto, StartGameDto, KickPlayerDto, UpdatePlayerDto, SettingsUpdateDto } from './dto';
 import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
@@ -56,7 +56,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     if (!userId) {
-      client.emit('room:error', { code: WsErrorCode.TOKEN_EXPIRED, message: '登录态失效' });
+      client.emit('room:error', { code: WsErrorCode.UNAUTHORIZED, message: '登录态失效' });
       client.disconnect();
       return;
     }
@@ -146,16 +146,29 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     this.logger.debug(`New player ${userId} joined room ${payload.roomCode}`);
     client.join(payload.roomCode);
-    await this.broadcastRoomState(payload.roomCode);
-
-    // Emit player-joined event to all OTHER clients in the room for immediate UI update
-    const newPlayer = result.player;
     const playerCountAfter = await this.roomService.getPlayerCount(payload.roomCode);
-    this.logger.debug(`Emitting room:player-joined for user ${userId} to room ${payload.roomCode}`);
-    client.to(payload.roomCode).emit('room:player-joined', {
-      player: newPlayer,
-      playerCount: playerCountAfter,
-    });
+    await this.notifyClientsAfterJoin(
+      payload.roomCode,
+      result.player,
+      playerCountAfter,
+      client.id,
+    );
+  }
+
+  /** After join succeeds (WebSocket or HTTP): broadcast state and player-joined. */
+  async notifyClientsAfterJoin(
+    roomCode: string,
+    player: PlayerInfo,
+    playerCount: number,
+    excludeSocketId?: string,
+  ): Promise<void> {
+    await this.broadcastRoomState(roomCode);
+    const payload = { player, playerCount };
+    if (excludeSocketId) {
+      this.server.to(roomCode).except(excludeSocketId).emit('room:player-joined', payload);
+    } else {
+      this.server.to(roomCode).emit('room:player-joined', payload);
+    }
   }
 
   /**

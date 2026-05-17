@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { RoomController } from './room.controller';
 import { RoomService, RoomInfo, PlayerInfo } from './room.service';
@@ -71,6 +72,7 @@ describe('RoomController', () => {
       notifyClientsAfterStart: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterEnd: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterSettingsUpdate: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterJoin: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -91,6 +93,46 @@ describe('RoomController', () => {
     controller = module.get<RoomController>(RoomController);
     roomService = module.get(RoomService) as jest.Mocked<RoomService>;
     roomGateway = module.get(RoomGateway) as jest.Mocked<RoomGateway>;
+  });
+
+
+  describe('POST /rooms/:code/join', () => {
+    const joinPlayer: PlayerInfo = {
+      id: 'player-2',
+      userId: 'user-2',
+      seatNo: 2,
+      isOnline: true,
+      joinedAt: new Date('2024-01-01'),
+      user: { id: 'user-2', nickName: 'Guest', avatarUrl: 'https://example.com/2.png' },
+    };
+
+    it('successful join broadcasts and returns room detail', async () => {
+      roomService.joinRoom.mockResolvedValue({
+        roomState: { room: mockRoom, players: [...mockPlayers, joinPlayer] },
+        player: joinPlayer,
+        playerCount: 2,
+      });
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue([...mockPlayers, joinPlayer]);
+
+      const result = await controller.joinRoom({ user: { id: 'user-2' } }, 'abcdef');
+
+      expect(roomGateway.notifyClientsAfterJoin).toHaveBeenCalledWith('ABCDEF', joinPlayer, 2);
+      expect(result.code).toBe('ABCDEF');
+    });
+
+    it('already in room → 409 ConflictException', async () => {
+      roomService.joinRoom.mockResolvedValue({ error: '你已在房间中' });
+
+      await expect(controller.joinRoom(mockReq, 'ABCDEF')).rejects.toThrow(ConflictException);
+      expect(roomGateway.notifyClientsAfterJoin).not.toHaveBeenCalled();
+    });
+
+    it('room not found → 404 NotFoundException', async () => {
+      roomService.joinRoom.mockResolvedValue({ error: '房间不存在' });
+
+      await expect(controller.joinRoom(mockReq, 'ABCDEF')).rejects.toThrow(NotFoundException);
+    });
   });
 
   describe('PATCH /rooms/:code/settings', () => {

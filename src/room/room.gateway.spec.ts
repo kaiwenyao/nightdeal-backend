@@ -49,7 +49,8 @@ describe('RoomGateway', () => {
 
   beforeEach(async () => {
     mockServer = {
-      to: jest.fn().mockReturnThis() as any,
+      to: jest.fn().mockReturnThis(),
+      except: jest.fn().mockReturnThis(),
       emit: jest.fn(),
       adapter: {
         rooms: new Map([['ABCDEF', new Set(['socket-1', 'socket-2'])]]),
@@ -197,10 +198,9 @@ describe('RoomGateway', () => {
       await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
 
       expect(mockClient.join).toHaveBeenCalledWith('ABCDEF');
-      expect(mockServer.emit).toHaveBeenCalledWith('room:state', expect.any(Object));
-      // player-joined is emitted via client.to(room).emit(), not server.emit()
-      expect(mockClient.to).toHaveBeenCalledWith('ABCDEF');
-      expect(mockClient.emit).toHaveBeenCalledWith('room:player-joined', {
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.except).toHaveBeenCalledWith('socket-1');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:player-joined', {
         player: newPlayer,
         playerCount: 2,
       });
