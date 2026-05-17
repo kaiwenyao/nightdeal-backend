@@ -5,7 +5,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { CatchAllExceptionsFilter } from './common/filters/catch-all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RedisIoAdapter } from './redis/redis-io.adapter';
 
@@ -40,7 +40,7 @@ async function bootstrap() {
     }),
   );
 
-  app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalFilters(new CatchAllExceptionsFilter());
   app.useGlobalInterceptors(new TransformInterceptor());
 
   if (process.env.NODE_ENV !== 'production') {

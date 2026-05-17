@@ -108,10 +108,19 @@ export class AuthService {
     return iv.toString('hex') + ':' + encrypted + ':' + authTag;
   }
 
+  private isInvalidWxSecret(secret: string): boolean {
+    const normalized = secret.trim().toLowerCase();
+    return (
+      normalized.length === 0 ||
+      normalized.includes('placeholder') ||
+      normalized === 'your_wx_secret_here'
+    );
+  }
+
   private async code2Session(code: string): Promise<{ openid: string; session_key: string }> {
     const appId = this.config.get<string>('WX_APPID');
     const secret = this.config.get<string>('WX_SECRET');
-    if (!appId || !secret || secret.includes('placeholder')) {
+    if (!appId || !secret || this.isInvalidWxSecret(secret)) {
       throw new UnauthorizedException('服务端未配置有效微信密钥，请检查 WX_APPID/WX_SECRET');
     }
 

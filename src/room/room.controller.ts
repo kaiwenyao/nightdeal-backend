@@ -9,6 +9,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   Patch,
   Put,
 } from '@nestjs/common';
@@ -60,8 +61,9 @@ export class RoomController {
     const code = raw.toUpperCase();
     const result = await this.roomService.joinRoom(code, req.user.id);
     if ('error' in result) {
-      throw new BadRequestException(result.error);
+      this.throwJoinRoomError(result.error);
     }
+    await this.roomGateway.notifyClientsAfterJoin(code, result.player, result.playerCount);
     return this.buildRoomDetail(code);
   }
 
@@ -208,9 +210,19 @@ export class RoomController {
     }
     const player = await this.roomService.getPlayer(code, req.user.id);
     if (!player && room.hostId !== req.user.id) {
-      throw new ForbiddenException('Not a member of this room');
+      throw new ForbiddenException('你不是该房间成员');
     }
     return this.buildRoomDetail(code);
+  }
+
+  private throwJoinRoomError(error: string): never {
+    if (error === '你已在房间中') {
+      throw new ConflictException(error);
+    }
+    if (error === '房间不存在') {
+      throw new NotFoundException(error);
+    }
+    throw new BadRequestException(error);
   }
 
   private async buildRoomDetail(code: string) {
