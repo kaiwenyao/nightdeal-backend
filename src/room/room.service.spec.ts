@@ -485,6 +485,54 @@ describe('RoomService', () => {
 
       expect(result).toEqual({ error: '角色总数(2)与玩家数(3)不匹配' });
     });
+
+    it('with isRandomSeat=true shuffles player seat numbers', async () => {
+      const roomWithRandomSeat = {
+        ...sgsRoom,
+        isRandomSeat: true,
+        roleConfig: { monarch: 1, loyalist: 1, rebel: 1, traitor: 0, spy: 0 },
+      };
+      const players = buildPlayers(3);
+
+      mockPrisma.room.findUnique.mockResolvedValue(roomWithRandomSeat);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(players);
+      mockPrisma.roomPlayer.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.gameRecord.create.mockResolvedValue({});
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toHaveProperty('assignments');
+      if ('assignments' in result) {
+        const seatNos = result.assignments.map((a) => a.seatNo).sort((a, b) => a - b);
+        expect(seatNos).toEqual([1, 2, 3]);
+        expect(mockPrisma.roomPlayer.updateMany).toHaveBeenCalled();
+      }
+    });
+
+    it('with isRandomSeat=false does not shuffle seats', async () => {
+      const roomWithoutRandomSeat = {
+        ...sgsRoom,
+        isRandomSeat: false,
+        roleConfig: { monarch: 1, loyalist: 1, rebel: 1, traitor: 0, spy: 0 },
+      };
+      const players = buildPlayers(3);
+
+      mockPrisma.room.findUnique.mockResolvedValue(roomWithoutRandomSeat);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(players);
+      mockPrisma.gameRecord.create.mockResolvedValue({});
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toHaveProperty('assignments');
+      if ('assignments' in result) {
+        const seatNos = result.assignments.map((a) => a.seatNo);
+        expect(seatNos).toEqual([1, 2, 3]);
+        const seatShuffleCalls = mockPrisma.roomPlayer.updateMany.mock.calls.filter(
+          (call: any) => call[0]?.data?.seatNo < 0,
+        );
+        expect(seatShuffleCalls).toHaveLength(0);
+      }
+    });
   });
 
   describe('joinRoom status guards', () => {
