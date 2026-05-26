@@ -156,6 +156,7 @@ describe('RoomController', () => {
         'ABCDEF',
         mockRoom.maxPlayers,
         mockRoom.roleConfig,
+        mockRoom.isRandomSeat,
       );
       expect(roomGateway.broadcastRoomState).not.toHaveBeenCalled();
       expect(result).toMatchObject({
@@ -231,6 +232,7 @@ describe('RoomController', () => {
         { merlin: true, loyalServants: 3, minions: 2 },
         8,
         undefined,
+        undefined,
       );
       expect(result).toEqual({
         id: 'room-1',
@@ -239,6 +241,7 @@ describe('RoomController', () => {
         gameType: 'AVALON',
         roleConfig: mockRoom.roleConfig,
         maxPlayers: 8,
+        isRandomSeat: false,
         createdAt: mockRoom.createdAt,
       });
     });
