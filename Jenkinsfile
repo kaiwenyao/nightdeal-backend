@@ -190,31 +190,31 @@ spec:
                             '''
 
                             // 构建镜像
-                            sh '''
-                                docker build -t $DOCKER_USER/nightdeal-backend:latest -f Dockerfile .
-                            '''
+                            def safeBranchName = branchName.replace("/", "-").replace("_", "-")
+                            def imageTag = "${safeBranchName}-${gitCommit}-j${env.BUILD_NUMBER}"
+
+                            sh """
+                                docker build -t ${DOCKER_USER}/nightdeal-backend:${imageTag} -f Dockerfile .
+                            """
 
                             // 根据分支和标签推送不同版本
                             if (env.TAG_NAME) {
-                                sh '''
-                                    docker tag $DOCKER_USER/nightdeal-backend:latest $DOCKER_USER/nightdeal-backend:''' + env.TAG_NAME + '''
-                                    docker push $DOCKER_USER/nightdeal-backend:''' + env.TAG_NAME + '''
-                                    docker push $DOCKER_USER/nightdeal-backend:latest
-                                '''
+                                sh """
+                                    docker tag ${DOCKER_USER}/nightdeal-backend:${imageTag} ${DOCKER_USER}/nightdeal-backend:${env.TAG_NAME}
+                                    docker push ${DOCKER_USER}/nightdeal-backend:${env.TAG_NAME}
+                                    docker tag ${DOCKER_USER}/nightdeal-backend:${imageTag} ${DOCKER_USER}/nightdeal-backend:latest
+                                    docker push ${DOCKER_USER}/nightdeal-backend:latest
+                                """
                             } else if (branchName == 'main' || branchName == 'master') {
-                                sh '''
-                                    docker tag $DOCKER_USER/nightdeal-backend:latest $DOCKER_USER/nightdeal-backend:commit-''' + gitCommit + '''
-                                    docker push $DOCKER_USER/nightdeal-backend:commit-''' + gitCommit + '''
-                                    docker tag $DOCKER_USER/nightdeal-backend:latest $DOCKER_USER/nightdeal-backend:build-''' + env.BUILD_NUMBER + '''
-                                    docker push $DOCKER_USER/nightdeal-backend:build-''' + env.BUILD_NUMBER + '''
-                                    docker push $DOCKER_USER/nightdeal-backend:latest
-                                '''
+                                sh """
+                                    docker tag ${DOCKER_USER}/nightdeal-backend:${imageTag} ${DOCKER_USER}/nightdeal-backend:latest
+                                    docker push ${DOCKER_USER}/nightdeal-backend:${imageTag}
+                                    docker push ${DOCKER_USER}/nightdeal-backend:latest
+                                """
                             } else {
-                                def safeBranchName = branchName.replace("/", "-").replace("_", "-")
-                                sh '''
-                                    docker tag $DOCKER_USER/nightdeal-backend:latest $DOCKER_USER/nightdeal-backend:dev-''' + safeBranchName + '-' + gitCommit + '''
-                                    docker push $DOCKER_USER/nightdeal-backend:dev-''' + safeBranchName + '-' + gitCommit + '''
-                                '''
+                                sh """
+                                    docker push ${DOCKER_USER}/nightdeal-backend:${imageTag}
+                                """
                             }
                         }
                     }
@@ -374,7 +374,7 @@ spec:
                     container('docker') {
                         withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                             sh '''
-                                docker rmi "${DOCKER_USER}/nightdeal-backend:build-${BUILD_NUMBER}" || true
+                                docker rmi "${DOCKER_USER}/nightdeal-backend:${BRANCH_NAME}-${GIT_COMMIT}-j${BUILD_NUMBER}" || true
                                 docker rmi "${DOCKER_USER}/nightdeal-backend:latest" || true
                             '''
                         }
