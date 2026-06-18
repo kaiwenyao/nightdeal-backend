@@ -10,6 +10,7 @@ import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { RoomModule } from './room/room.module';
 import { StorageModule } from './storage/storage.module';
+import { AvalonModule } from './avalon/avalon.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { StorageModule } from './storage/storage.module';
     StorageModule,
     AuthModule,
     RoomModule,
+    AvalonModule,
   ],
   providers: [
     {
