@@ -17,6 +17,7 @@ import {
   QuestResult,
   GameResult,
   PlayerView,
+  Faction,
   DEFAULT_AVALON_CONFIG,
 } from './types';
 import {
