@@ -737,11 +737,12 @@ export class RoomService {
   @Cron('*/10 * * * *')
   async cleanupIdleRooms(): Promise<void> {
     this.logger.log('Running idle room cleanup...');
-    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const idleThresholdMs = 60 * 60 * 1000; // 1 hour
+    const oneHourAgo = new Date(Date.now() - idleThresholdMs);
     const idleRooms = await this.prisma.room.findMany({
       where: {
         status: 'WAITING',
-        updatedAt: { lt: thirtyMinutesAgo },
+        updatedAt: { lt: oneHourAgo },
       },
       select: { id: true, code: true },
     });
@@ -754,11 +755,11 @@ export class RoomService {
         // genuinely active rooms from stale ones with "ghost" online players.
         const lastActiveAtStr = await this.redis.hget(`room:${room.code}`, 'lastActiveAt');
         const lastActiveAt = lastActiveAtStr ? parseInt(lastActiveAtStr, 10) : null;
-        if (lastActiveAt && lastActiveAt > Date.now() - 30 * 60 * 1000) {
+        if (lastActiveAt && lastActiveAt > Date.now() - idleThresholdMs) {
           this.logger.log(`Skipping idle cleanup for room ${room.code}: has online players with recent activity`);
           continue;
         }
-        this.logger.log(`Deleting stale room ${room.code}: has "online" players but no activity for 30min`);
+        this.logger.log(`Deleting stale room ${room.code}: has "online" players but no activity for 1h`);
       }
       await this.prisma.roomPlayer.deleteMany({ where: { roomId: room.id } });
       await this.prisma.room.delete({ where: { id: room.id } });

@@ -113,7 +113,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await this.roomService.markPlayerOnline(payload.roomCode, userId);
         await this.broadcastRoomState(payload.roomCode);
         if (room.status === 'PLAYING' && existingPlayer.role) {
-          client.emit('room:started', { yourRole: existingPlayer.role });
+          client.emit('room:started', { yourRole: existingPlayer.role, gameType: room.gameType });
         }
         this.server.to(payload.roomCode).emit('room:reconnected', { userId });
         return;
@@ -121,7 +121,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.broadcastRoomState(payload.roomCode);
       if (room.status === 'PLAYING' && existingPlayer.role) {
-        client.emit('room:started', { yourRole: existingPlayer.role });
+        client.emit('room:started', { yourRole: existingPlayer.role, gameType: room.gameType });
       }
       return;
     }
@@ -207,16 +207,23 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.broadcastRoomState(roomCode);
   }
 
-  /** After start succeeds (WebSocket or HTTP): per-player roles + full room state. */
+  /** After start succeeds (WebSocket or HTTP): full room state then per-player roles. */
   async notifyClientsAfterStart(
     roomCode: string,
     assignments: { userId: string; role: string }[],
   ): Promise<void> {
-    for (const assignment of assignments) {
-      this.server.to('user:' + assignment.userId).emit('room:started', { yourRole: assignment.role });
-    }
-
+    // Broadcast room state FIRST so clients have the correct gameType
+    // before room:started triggers game-page navigation.
     await this.broadcastRoomState(roomCode);
+
+    const room = await this.roomService.getRoom(roomCode);
+    const gameType = room?.gameType ?? 'AVALON';
+    for (const assignment of assignments) {
+      this.server.to('user:' + assignment.userId).emit('room:started', {
+        yourRole: assignment.role,
+        gameType,
+      });
+    }
   }
 
   /**

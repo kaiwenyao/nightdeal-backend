@@ -369,11 +369,16 @@ describe('RoomGateway', () => {
       await gateway.handleStart(mockClient, { roomCode: 'ABCDEF' });
 
       expect(roomService.startGame).toHaveBeenCalledWith('ABCDEF', 'user-2');
-      expect(mockServer.to).toHaveBeenCalledWith('user:user-2');
-      expect(mockServer.emit).toHaveBeenCalledWith('room:started', { yourRole: '梅林' });
+      // room:state should be emitted BEFORE room:started (correct event ordering)
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
         room: mockRoom,
         players: mockPlayers,
+      });
+      expect(mockServer.to).toHaveBeenCalledWith('user:user-2');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:started', {
+        yourRole: '梅林',
+        gameType: 'AVALON',
       });
     });
   });
