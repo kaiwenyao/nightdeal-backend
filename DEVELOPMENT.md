@@ -51,7 +51,6 @@ npm install
 | `WX_SECRET` | 微信小程序 AppSecret |
 | `WX_LOGIN_TIMEOUT_MS` | 微信登录请求超时时间，默认行为按代码配置处理 |
 | `JWT_SECRET` | JWT 签名密钥 |
-| `SESSION_ENCRYPTION_KEY` | 32 字节 session_key 加密密钥 |
 | `OSS_ACCESS_KEY_ID` | 阿里云 OSS AccessKey ID |
 | `OSS_ACCESS_KEY_SECRET` | 阿里云 OSS AccessKey Secret |
 | `OSS_ENDPOINT` | OSS endpoint |
@@ -62,7 +61,7 @@ npm install
 | `CORS_ORIGIN` | 可选，HTTP 和 Socket.IO 允许的来源 |
 | `CORS_CREDENTIALS` | 可选，`false` 时关闭 HTTP credentials |
 
-`JWT_SECRET` 和 `SESSION_ENCRYPTION_KEY` 在启动时都由 Joi 校验为至少 32 个字符（见 `src/config/config.module.ts`），校验不通过会直接终止启动。`AuthService` 取 `SESSION_ENCRYPTION_KEY` 的 UTF-8 编码前 32 字节作为 AES-256-GCM 密钥；若编码不足 32 字节会立即抛错。该错误分支在 Joi 校验通过的前提下不可达，仅用于直接实例化等绕过校验的场景；生产环境应使用完整长度的随机密钥。
+`JWT_SECRET` 在启动时由 Joi 校验为至少 32 个字符（见 `src/config/config.module.ts`），校验不通过会直接终止启动。微信登录下发的 `session_key` 不落盘：Redis 会话（`session:{userId}`）只存 userId，TTL 2 小时，`verifyToken` 校验成功时滑动续期；JWT 本身 `expiresIn` 为 12 小时硬上限。
 
 ### 3.3 常用命令
 
@@ -458,17 +457,18 @@ SGS 配置通过 `SgsRoleConfigSchema` 校验，角色分配同样使用 `crypto
 | `BadRequestException` | `40001` | 参数错误 |
 | `UnauthorizedException` | `40101` | 未登录 |
 | `ForbiddenException` | `40301` | 无权限操作 |
-| `NotFoundException` | `40401` | 房间不存在 |
+| `NotFoundException` | `40401` | 资源不存在（异常消息含「房间」时为「房间不存在」） |
 | `GoneException` | `41001` | 接口已废弃 |
 | `429` | `42901` | 请求过于频繁 |
+| `GatewayTimeoutException` | `50401` | 请求超时，请稍后重试 |
 | `WeChatApiException` | `50002` | 微信服务暂时不可用，请稍后重试 |
 | 其他服务端错误 | `50001` | 服务器内部错误 |
 
 补充说明：
 
 - **已在房间中**：`ConflictException`，业务码 `40901`、消息「你已在房间中」。
-- **微信登录超时 / 网络失败**：开发环境分别为 HTTP 504 / 503，业务码均为 `50001`；生产环境 message 统一为「服务器内部错误」。
-- **生产环境**：所有 4xx/5xx 的 `message` 使用上表默认文案，不返回具体业务描述。
+- **微信登录超时 / 网络失败**：分别为 HTTP 504（业务码 `50401`）/ 503。
+- **生产环境**：4xx 保留原始业务 `message`，仅 5xx 使用上表默认文案，避免泄露内部细节。
 
 非生产环境响应会额外包含清理后的 `error` 字段；生产环境只返回泛化消息，避免泄露内部细节。
 
@@ -627,7 +627,7 @@ Avalon 游戏状态存储在 Redis（`avalon:{roomCode}:state`），TTL 为 4 �
 - DTO 白名单、禁止未知字段、自动类型转换
 - HTTP JWT guard 和 WebSocket JWT guard
 - JWT 校验后继续检查 Redis session
-- 微信 `session_key` 使用 AES-256-GCM 加密后再写入 Redis
+- 微信 `session_key` 不写入 Redis，会话只存 userId，TTL 滑动续期
 - 登录、头像上传和 WebSocket 业务事件限流
 - 头像上传限制文件大小、MIME 类型、输出尺寸和输出体积
 - 头像 URL 更新限制为 HTTPS 且必须匹配 `AVATAR_URL_PREFIX`
@@ -636,9 +636,9 @@ Avalon 游戏状态存储在 Redis（`avalon:{roomCode}:state`），TTL 为 4 �
 
 开发时需要注意：
 
-- 不要把 `WX_SECRET`、`JWT_SECRET`、`SESSION_ENCRYPTION_KEY`、OSS 密钥提交到仓库
+- 不要把 `WX_SECRET`、`JWT_SECRET`、OSS 密钥提交到仓库
 - 生产环境必须设置明确的 `CORS_ORIGIN`
-- `JWT_SECRET` 和 `SESSION_ENCRYPTION_KEY` 不应使用示例值或弱口令
+- `JWT_SECRET` 不应使用示例值或弱口令
 - 阿里云 OSS bucket 权限应只开放必要读取能力，写入通过后端完成
 
 ## 14. 前端对接约定

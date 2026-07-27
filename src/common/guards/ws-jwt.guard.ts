@@ -41,7 +41,9 @@ export class WsJwtGuard implements CanActivate {
   }
 
   private reject(client: Socket, message: string): void {
-    client.emit('room:error', { code: WsErrorCode.UNAUTHORIZED, message });
+    // 各命名空间有各自的错误事件约定，avalon 客户端只监听 avalon:error
+    const errorEvent = client.nsp?.name === '/avalon' ? 'avalon:error' : 'room:error';
+    client.emit(errorEvent, { code: WsErrorCode.UNAUTHORIZED, message });
     client.disconnect(true);
   }
 }

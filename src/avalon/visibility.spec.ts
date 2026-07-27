@@ -43,6 +43,41 @@ describe('Visibility', () => {
     };
   }
 
+  // ==================== 终局阶段视图测试 ====================
+
+  describe('terminal phase view', () => {
+    it('should build view without throwing in assassination phase at round 5', () => {
+      // 回归：终局分支曾 round+1 到 6，getQuestConfig(5, 6) 抛异常导致游戏卡死
+      const state = createState(createPlayers());
+      state.phase = 'assassination';
+      state.round = 5;
+      state.goodScore = 3;
+
+      const view = getPlayerView(state, 'p1');
+
+      expect(view.phase).toBe('assassination');
+      expect(view.currentQuestConfig.round).toBe(5);
+    });
+
+    it('should build view without throwing in finished phase at round 5', () => {
+      const state = createState(createPlayers());
+      state.phase = 'finished';
+      state.round = 5;
+      state.evilScore = 3;
+      state.winner = 'evil';
+      state.resultReason = 'three_failed_quests';
+
+      const view = getPlayerView(state, 'p1');
+
+      expect(view.phase).toBe('finished');
+      expect(view.gameResult).toEqual({
+        winner: 'evil',
+        reason: 'three_failed_quests',
+        assassinatedPlayerId: undefined,
+      });
+    });
+  });
+
   // ==================== 梅林可见性测试 ====================
 
   describe('Merlin visibility', () => {

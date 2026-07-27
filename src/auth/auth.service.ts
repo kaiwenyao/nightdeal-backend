@@ -1,7 +1,6 @@
-import { GatewayTimeoutException, Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, GatewayTimeoutException, Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { createCipheriv, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { WeChatApiException } from '../common/exceptions/wechat-api.exception';
@@ -19,7 +18,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 @Injectable()
 export class AuthService {
-  private readonly encryptionKey: Buffer;
+  // Redis 会话 TTL，verifyToken 校验成功时滑动续期到该时长；
+  // JWT 自身的 expiresIn（见 auth.module.ts）才是会话硬上限
+  private static readonly SESSION_TTL_SECONDS = 7200;
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
@@ -27,25 +28,10 @@ export class AuthService {
     private redis: RedisService,
     private config: ConfigService,
     private jwtService: JwtService,
-  ) {
-    const encryptionKeyStr = this.config.get<string>('SESSION_ENCRYPTION_KEY');
-    if (!encryptionKeyStr) {
-      throw new Error('SESSION_ENCRYPTION_KEY is required. Set it in environment variables.');
-    }
-    // config.module.ts validates SESSION_ENCRYPTION_KEY as >= 32 chars via Joi at
-    // startup, so the key is guaranteed long enough here. AES-256-GCM requires a
-    // 32-byte key; take the first 32 bytes of the UTF-8 encoding. The guard below
-    // fails fast with a clear message instead of letting createCipheriv throw an
-    // opaque "Invalid key length" error.
-    const keyBytes = Buffer.from(encryptionKeyStr, 'utf8');
-    if (keyBytes.length < 32) {
-      throw new Error('SESSION_ENCRYPTION_KEY must encode to at least 32 bytes.');
-    }
-    this.encryptionKey = keyBytes.subarray(0, 32);
-  }
+  ) {}
 
   async login(code: string): Promise<{ token: string; user: any }> {
-    const { openid, session_key } = await this.code2Session(code);
+    const { openid } = await this.code2Session(code);
 
     const user = await this.prisma.user.upsert({
       where: { openId: openid },
@@ -55,11 +41,11 @@ export class AuthService {
 
     const token = this.generateToken(user.id);
 
-    const encryptedSessionKey = this.encrypt(session_key);
+    // 微信 session_key 不落盘（不写入 Redis），只保留会话存在性标记
     await this.redis.set(
       `session:${user.id}`,
-      JSON.stringify({ userId: user.id, sessionKey: encryptedSessionKey }),
-      7200,
+      JSON.stringify({ userId: user.id }),
+      AuthService.SESSION_TTL_SECONDS,
     );
 
     return {
@@ -73,6 +59,14 @@ export class AuthService {
   }
 
   async updateProfile(userId: string, data: { nickName?: string; avatarUrl?: string }) {
+    if (data.avatarUrl !== undefined) {
+      // 头像地址必须来自本服务的 OSS，防止挂任意外链
+      const avatarUrlPrefix = this.config.get<string>('AVATAR_URL_PREFIX');
+      if (!avatarUrlPrefix || !data.avatarUrl.startsWith(avatarUrlPrefix)) {
+        throw new BadRequestException('头像地址不合法，请先通过头像上传接口上传');
+      }
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -91,21 +85,15 @@ export class AuthService {
   async verifyToken(token: string): Promise<string | null> {
     try {
       const payload = this.jwtService.verify(token, { algorithms: ['HS256'] });
-      const session = await this.redis.get(`session:${payload.sub}`);
+      const sessionKey = `session:${payload.sub}`;
+      const session = await this.redis.get(sessionKey);
       if (!session) return null;
+      // 滑动续期：校验成功就重置会话 TTL，长对局不会因 2 小时不活动被集体踢下线
+      await this.redis.expire(sessionKey, AuthService.SESSION_TTL_SECONDS);
       return payload.sub;
     } catch {
       return null;
     }
-  }
-
-  private encrypt(text: string): string {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    const authTag = cipher.getAuthTag().toString('hex');
-    return iv.toString('hex') + ':' + encrypted + ':' + authTag;
   }
 
   private isInvalidWxSecret(secret: string): boolean {

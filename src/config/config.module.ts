@@ -14,7 +14,6 @@ import * as Joi from 'joi';
         WX_SECRET: Joi.string().required(),
         WX_LOGIN_TIMEOUT_MS: Joi.number().default(8000),
         JWT_SECRET: Joi.string().min(32).required(),
-        SESSION_ENCRYPTION_KEY: Joi.string().min(32).required(),
         OSS_ACCESS_KEY_ID: Joi.string().required(),
         OSS_ACCESS_KEY_SECRET: Joi.string().required(),
         OSS_ENDPOINT: Joi.string().required(),
@@ -22,7 +21,11 @@ import * as Joi from 'joi';
         OSS_REGION: Joi.string().required(),
         OSS_AVATAR_KEY_PREFIX: Joi.string().default('avatars/'),
         AVATAR_URL_PREFIX: Joi.string().required(),
-        CORS_ORIGIN: Joi.string().allow('').optional(),
+        // 支持逗号分隔多个来源，如 https://a.com,https://b.com
+        CORS_ORIGIN: Joi.string()
+          .allow('')
+          .optional()
+          .pattern(/^(https?:\/\/[^,\s]+)(\s*,\s*https?:\/\/[^,\s]+)*$/),
         CORS_CREDENTIALS: Joi.string().valid('true', 'false').default('true'),
       }),
     }),
