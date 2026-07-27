@@ -1,8 +1,6 @@
 # NightDeal Backend
 
-NightDeal 后端是微信小程序游戏房间服务，当前支持 Avalon 和 SGS 两种游戏类型的通用房间、角色配置和角色分配。服务基于 NestJS、PostgreSQL、Redis 和 Socket.IO 构建。
-
-> 当前 Avalon 只实现房间生命周期和身份分配，尚未实现组队、公投、任务、刺杀等完整阿瓦隆对局状态机。
+NightDeal 后端是微信小程序游戏房间服务，当前支持 Avalon 和 SGS 两种游戏类型。Avalon 已实现完整游戏状态机（组队、公投、任务、刺杀、胜负判定），SGS 实现通用房间和角色分配。服务基于 NestJS、PostgreSQL、Redis 和 Socket.IO 构建。
 
 ## 技术栈
 
@@ -124,6 +122,7 @@ curl http://localhost:3000/api/health
 nightdeal-backend/
 ├── src/
 │   ├── auth/                  # 微信登录、JWT、用户资料
+│   ├── avalon/                # Avalon 游戏引擎、视野、服务、WebSocket 网关
 │   ├── common/                # 全局过滤器、拦截器、WebSocket guard
 │   ├── config/                # 环境变量校验
 │   ├── health/                # 健康检查
@@ -137,9 +136,7 @@ nightdeal-backend/
 │   ├── migrations/
 │   └── generated/prisma/      # Prisma Client 输出目录
 ├── docs/
-│   ├── AVALON-DEVELOPMENT.md
-│   ├── SGS-DEVELOPMENT.md
-│   └── wechat-auth.md
+│   └── development-guide.md    # 合并后的完整开发文档
 ├── DEVELOPMENT.md
 ├── docker-compose.yml
 ├── Dockerfile
@@ -225,13 +222,9 @@ npx prisma migrate reset
 
 ## WebSocket 摘要
 
-命名空间：
+### /room 命名空间
 
-```text
-/room
-```
-
-认证：
+房间管理和通用游戏生命周期。
 
 ```ts
 io('/room', {
@@ -256,14 +249,38 @@ io('/room', {
 
 角色下发：向 `user:{userId}` 发送 **`room:started`**，payload 为 `{ yourRole }`（不通过 `room:state` 暴露他人角色）。完整契约见 [DEVELOPMENT.md](./DEVELOPMENT.md) §12。
 
+### /avalon 命名空间
+
+Avalon 游戏实时通信。
+
+```ts
+io('/avalon', {
+  auth: { token },
+  transports: ['websocket'],
+});
+```
+
+客户端事件：
+
+| 事件 | 说明 |
+| --- | --- |
+| `avalon:join` | 加入 Avalon 游戏房间 |
+| `avalon:leave` | 离开 Avalon 游戏房间 |
+| `avalon:propose-team` | 队长提议任务队伍 |
+| `avalon:team-vote` | 投票（approve/reject） |
+| `avalon:quest-action` | 执行任务（success/fail） |
+| `avalon:assassinate` | 刺客刺杀目标 |
+
+服务端事件（摘要）：`avalon:state`、`avalon:phase-changed`、`avalon:vote-updated`、`avalon:vote-resolved`、`avalon:quest-action-updated`、`avalon:quest-resolved`、`avalon:assassination-resolved`、`avalon:game-finished`、`avalon:error`。
+
+完整契约见 [DEVELOPMENT.md](./DEVELOPMENT.md) §12.4 和 [docs/development-guide.md](./docs/development-guide.md)。
+
 ## 开发文档
 
 | 文档 | 内容 |
 | --- | --- |
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 当前后端实现、接口、数据模型、Redis、测试重点 |
-| [docs/wechat-auth.md](./docs/wechat-auth.md) | 微信登录、JWT、session 和头像上传 |
-| [docs/AVALON-DEVELOPMENT.md](./docs/AVALON-DEVELOPMENT.md) | 当前 Avalon 通用房间和身份分配实现，以及完整状态机未实现边界 |
-| [docs/SGS-DEVELOPMENT.md](./docs/SGS-DEVELOPMENT.md) | SGS 游戏模式实现 |
+| [docs/development-guide.md](./docs/development-guide.md) | 合并后的完整开发文档：微信认证、Avalon 游戏、SGS 游戏、代码审核记录、原始需求规划 |
 
 ## 提交前检查
 
