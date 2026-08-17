@@ -120,9 +120,15 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       if (confirmed) {
         if (wasOffline) this.clearOfflineTimeout(userId, payload.roomCode);
         client.join(payload.roomCode);
+        const stillMember = await this.roomService.getPlayer(payload.roomCode, userId);
+        if (!stillMember) {
+          client.leave(payload.roomCode);
+          client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '房间成员状态已变更，请重新加入' });
+          return;
+        }
         await this.broadcastRoomState(payload.roomCode);
-        if (room.status === 'PLAYING' && existingPlayer.role) {
-          client.emit('room:started', { yourRole: existingPlayer.role, gameType: room.gameType });
+        if (room.status === 'PLAYING' && stillMember.role) {
+          client.emit('room:started', { yourRole: stillMember.role, gameType: room.gameType });
         }
         if (wasOffline) {
           this.server.to(payload.roomCode).emit('room:reconnected', { userId });
@@ -240,6 +246,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
   }
 
+  private async restoreConcurrentMembership(roomCode: string, userId: string): Promise<boolean> {
+    if (!(await this.roomService.getPlayer(roomCode, userId))) return false;
+    this.server.in('user:' + userId).socketsJoin(roomCode);
+    return true;
+  }
+
   /**
    * After DB kick succeeds (via WebSocket or HTTP): notify kicked sockets,
    * broadcast player-left + room state to remaining clients.
@@ -252,6 +264,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       message: '你已被房主踢出房间',
     });
     this.server.in('user:' + targetUserId).socketsLeave(roomCode);
+    if (await this.restoreConcurrentMembership(roomCode, targetUserId)) {
+      await this.broadcastRoomState(roomCode);
+      return;
+    }
 
     const playerCount = await this.roomService.getPlayerCount(roomCode);
     this.server.to(roomCode).emit('room:player-left', {
@@ -276,6 +292,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   ): Promise<void> {
     if (opts?.evict !== false) {
       this.evictUserFromRoom(userId, roomCode);
+    }
+    if (await this.restoreConcurrentMembership(roomCode, userId)) {
+      await this.broadcastRoomState(roomCode);
+      return;
     }
     const playerCount = await this.roomService.getPlayerCount(roomCode);
     this.server.to(roomCode).emit('room:player-left', {

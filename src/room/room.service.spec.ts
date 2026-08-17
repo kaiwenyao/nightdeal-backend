@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { RoomService } from './room.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,6 +37,7 @@ describe('RoomService', () => {
       updateMany: jest.fn(),
     },
     $transaction: jest.fn(),
+    $queryRaw: jest.fn(),
   };
 
   const mockRedis = {
@@ -55,13 +57,18 @@ describe('RoomService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockPrisma.$transaction.mockReset().mockImplementation(async (cb: any) => cb(mockPrisma));
+    mockPrisma.$queryRaw.mockReset().mockResolvedValue([{ id: 'room-1' }]);
     mockPrisma.room.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockPrisma.room.deleteMany.mockReset().mockResolvedValue({ count: 1 });
     mockPrisma.gameRecord.create.mockReset().mockResolvedValue({ id: 'game-1' });
     mockPrisma.gameRecord.findFirst.mockReset().mockResolvedValue({ id: 'game-1' });
     mockPrisma.gameRecord.updateMany.mockReset().mockResolvedValue({ count: 1 });
     mockPrisma.roomPlayer.deleteMany.mockReset().mockResolvedValue({ count: 1 });
     mockPrisma.roomPlayer.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockPrisma.roomPlayer.findFirst.mockReset().mockResolvedValue(null);
     mockRedis.get.mockReset().mockResolvedValue(null);
+    mockRedis.hget.mockReset().mockResolvedValue(null);
+    mockRedis.del.mockReset().mockResolvedValue(undefined);
     mockRedis.setWithLock.mockReset().mockResolvedValue(undefined);
     mockRedis.delWithLock.mockReset().mockResolvedValue(undefined);
     mockRedis.delJsonFieldWithLock.mockReset().mockResolvedValue(true);
@@ -1213,6 +1220,54 @@ describe('RoomService', () => {
         (call: any) => call[0]?.data?.hostId,
       );
       expect(hostUpdates).toHaveLength(0);
+    });
+  });
+
+  describe('cleanupIdleRooms', () => {
+    const staleRoom = {
+      id: 'room-1',
+      code: 'ABCDEF',
+      status: 'WAITING',
+    };
+
+    it('keeps stale rooms that still have online players', async () => {
+      const updatedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      mockPrisma.room.findMany.mockResolvedValue([staleRoom]);
+      mockPrisma.room.findUnique.mockResolvedValue({ updatedAt });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([{ userId: 'u-1' }]);
+      mockRedis.get.mockResolvedValue(null); // no offline marker = online
+      mockRedis.hget.mockResolvedValue(null);
+
+      await service.cleanupIdleRooms();
+
+      expect(mockPrisma.room.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('commits DB deletion before best-effort Redis cleanup', async () => {
+      const updatedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      mockPrisma.room.findMany.mockResolvedValue([staleRoom]);
+      mockPrisma.room.findUnique.mockResolvedValue({ updatedAt });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([{ userId: 'u-1' }]);
+      mockPrisma.room.deleteMany.mockResolvedValue({ count: 1 });
+      mockRedis.get.mockImplementation(async (key: string) =>
+        key.startsWith('avalon:')
+          ? JSON.stringify({ generationId: 'game-1' })
+          : '1',
+      );
+      mockRedis.hget.mockResolvedValue(null);
+      mockRedis.del.mockRejectedValueOnce(new Error('redis down'));
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await expect(service.cleanupIdleRooms()).resolves.toBeUndefined();
+
+      expect(mockPrisma.room.deleteMany).toHaveBeenCalled();
+      expect(mockPrisma.room.deleteMany.mock.invocationCallOrder[0])
+        .toBeLessThan(mockRedis.del.mock.invocationCallOrder[0]);
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed Redis cleanup'),
+        expect.any(Error),
+      );
+      loggerSpy.mockRestore();
     });
   });
 

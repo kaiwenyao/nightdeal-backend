@@ -56,6 +56,7 @@ describe('RoomGateway', () => {
       emit: jest.fn(),
       fetchSockets: jest.fn().mockResolvedValue([]),
       socketsLeave: jest.fn(),
+      socketsJoin: jest.fn(),
       adapter: {
         rooms: new Map([['ABCDEF', new Set(['socket-1', 'socket-2'])]]),
       },
@@ -231,7 +232,9 @@ describe('RoomGateway', () => {
 
   describe('handleLeave', () => {
     it('emits player-left and broadcasts room state', async () => {
-      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.getPlayer
+        .mockResolvedValueOnce(mockPlayers[0])
+        .mockResolvedValue(null);
       roomService.getPlayerCount.mockResolvedValue(1);
 
       await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
@@ -242,6 +245,18 @@ describe('RoomGateway', () => {
         userId: 'user-2',
         playerCount: 1,
       });
+    });
+
+    it('restores sockets when a fresh membership races delayed leave eviction', async () => {
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      await gateway.notifyClientsAfterLeave('ABCDEF', 'user-2');
+
+      expect(mockServer.socketsLeave).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.socketsJoin).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.emit).not.toHaveBeenCalledWith('room:player-left', expect.anything());
     });
 
     it('emits offline rather than player-left when a PLAYING leave retains the player', async () => {

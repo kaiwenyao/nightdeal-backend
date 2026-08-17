@@ -20,6 +20,7 @@ import {
 import {
   AvalonRole,
   AvalonGameConfig,
+  AvalonGameState,
   DEFAULT_AVALON_CONFIG,
   FACTION_COUNTS,
 } from '../avalon/types';
@@ -1402,23 +1403,23 @@ export class RoomService {
     for (const room of idleRooms) {
       // Global lock order is DB room row → Avalon state lease. This matches
       // start initialization and avoids a DB↔Redis lock inversion.
-      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const cleanup = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const locked = await tx.$queryRaw<Array<{ id: string }>>(
           Prisma.sql`SELECT "id" FROM "rooms" WHERE "id" = ${room.id} FOR UPDATE`,
         );
-        if (locked.length === 0) return;
+        if (locked.length === 0) return null;
         const current = await tx.room.findUnique({
           where: { id: room.id },
           select: { updatedAt: true },
         });
-        if (!current || current.updatedAt >= oneHourAgo) return;
+        if (!current || current.updatedAt >= oneHourAgo) return null;
 
-        await this.redis.withLock(`lock:avalon:${room.code}:state`, 30_000, async (lease) => {
+        return this.redis.withLock(`lock:avalon:${room.code}:state`, 30_000, async () => {
           const lastActiveAtStr = await this.redis.hget(`room:${room.code}`, 'lastActiveAt');
           const lastActiveAt = lastActiveAtStr ? Number(lastActiveAtStr) : NaN;
           if (Number.isFinite(lastActiveAt) && lastActiveAt > Date.now() - idleThresholdMs) {
             this.logger.log(`Skipping idle cleanup for room ${room.code}: recent room or game activity`);
-            return;
+            return null;
           }
 
           const players = await tx.roomPlayer.findMany({
@@ -1429,22 +1430,49 @@ export class RoomService {
             players.map(async (player) => !(await this.isPlayerOffline(room.code, player.userId))),
           );
           if (onlineFlags.some(Boolean)) {
-            this.logger.log(`Deleting stale room ${room.code}: has "online" players but no activity for 1h`);
+            this.logger.log(`Skipping idle cleanup for occupied room ${room.code}`);
+            return null;
+          }
+
+          const stateJson = await this.redis.get(`avalon:${room.code}:state`);
+          let generationId: string | undefined;
+          if (stateJson) {
+            try {
+              generationId = (JSON.parse(stateJson) as AvalonGameState).generationId;
+            } catch {
+              this.logger.warn(`Ignoring malformed Avalon state during cleanup for room ${room.code}`);
+            }
           }
 
           const deleted = await tx.room.deleteMany({
             where: { id: room.id, updatedAt: { lt: oneHourAgo } },
           });
-          if (deleted.count === 0) return;
-
-          await this.redis.del(`room:${room.code}`);
-          await this.redis.delWithLock(lease, `avalon:${room.code}:state`);
-          for (const player of players) {
-            await this.redis.del(`room:${room.code}:offline:${player.userId}`);
-          }
-          this.logger.log(`Deleted idle room ${room.code}${room.status === 'PLAYING' ? ' (abandoned game forced to end)' : ''}`);
+          if (deleted.count === 0) return null;
+          return { userIds: players.map((player) => player.userId), generationId };
         });
       });
+
+      if (!cleanup) continue;
+      // PostgreSQL is committed before any irreversible Redis cleanup.
+      try {
+        await this.redis.del(`room:${room.code}`);
+        for (const userId of cleanup.userIds) {
+          await this.redis.del(`room:${room.code}:offline:${userId}`);
+        }
+        if (cleanup.generationId) {
+          await this.redis.withLock(`lock:avalon:${room.code}:state`, 30_000, async (lease) => {
+            await this.redis.delJsonFieldWithLock(
+              lease,
+              `avalon:${room.code}:state`,
+              'generationId',
+              cleanup.generationId!,
+            );
+          });
+        }
+      } catch (error) {
+        this.logger.error(`Failed Redis cleanup for deleted room ${room.code}:`, error);
+      }
+      this.logger.log(`Deleted idle room ${room.code}${room.status === 'PLAYING' ? ' (abandoned game forced to end)' : ''}`);
     }
   }
 
