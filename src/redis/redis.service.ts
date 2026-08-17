@@ -72,6 +72,23 @@ export class RedisService implements OnModuleDestroy {
     await this.client.hset(key, field, value);
   }
 
+  /**
+   * HSET + 刷新 TTL。裸 hset 在键已过期后会重建一个没有 TTL 的键，
+   * 之后只能等业务侧清理才会消失；用 pipeline 让写入和续期一起下发。
+   */
+  async hsetWithExpire(
+    key: string,
+    field: string,
+    value: string,
+    ttlSeconds: number,
+  ): Promise<void> {
+    await this.client
+      .multi()
+      .hset(key, field, value)
+      .expire(key, ttlSeconds)
+      .exec();
+  }
+
   async hget(key: string, field: string): Promise<string | null> {
     return this.client.hget(key, field);
   }

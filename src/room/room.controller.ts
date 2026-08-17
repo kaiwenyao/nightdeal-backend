@@ -107,7 +107,7 @@ export class RoomController {
     if ('error' in result) {
       throw new BadRequestException(result.error);
     }
-    await this.roomGateway.notifyClientsAfterStart(code, result.assignments);
+    await this.roomGateway.notifyClientsAfterStart(code, result.assignments, result.gameType);
     return { success: true };
   }
 

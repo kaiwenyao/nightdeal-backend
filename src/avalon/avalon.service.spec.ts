@@ -28,6 +28,7 @@ describe('AvalonService', () => {
     expire: jest.fn().mockResolvedValue(undefined),
     incr: jest.fn().mockResolvedValue(1),
     hset: jest.fn().mockResolvedValue(undefined),
+    hsetWithExpire: jest.fn().mockResolvedValue(undefined),
     hget: jest.fn().mockResolvedValue(null),
   };
 
@@ -109,6 +110,20 @@ describe('AvalonService', () => {
       }
       expect(state!.assassinId).toBe('u5');
       expect(state!.merlinId).toBe('u1');
+    });
+
+    it('renews the room hash TTL when touching lastActiveAt', async () => {
+      // A bare hset would recreate an already-expired room hash with no expiry,
+      // leaking the key until the room itself is deleted.
+      await service.initializeGame('ABC123', basePlayers, baseConfig);
+
+      expect(mockRedis.hsetWithExpire).toHaveBeenCalledWith(
+        'room:ABC123',
+        'lastActiveAt',
+        expect.any(String),
+        86400,
+      );
+      expect(mockRedis.hset).not.toHaveBeenCalled();
     });
   });
 

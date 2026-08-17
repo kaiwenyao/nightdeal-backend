@@ -35,6 +35,7 @@ import {
   getLeaderId,
 } from './game-engine';
 import { getPlayerView, getTeamVoteView, getQuestActionView } from './visibility';
+import { ROOM_HASH_TTL_SECONDS } from '../room/room.constants';
 
 const GAME_STATE_TTL = 3600 * 24; // 24小时，游戏结束后状态保留一段时间供复盘，到期自动清理
 
@@ -89,10 +90,13 @@ export class AvalonService {
     // for an abandoned one. Avalon game actions never route through
     // markPlayerOnline/Offline, so without this the room would look idle even
     // while players are mid-game and be cascade-deleted along with its state.
-    await this.redis.hset(
+    // Renew the TTL as well: a bare hset on an already-expired key recreates it
+    // with no expiry at all, leaking the hash until the room is deleted.
+    await this.redis.hsetWithExpire(
       `room:${roomCode}`,
       'lastActiveAt',
       Date.now().toString(),
+      ROOM_HASH_TTL_SECONDS,
     );
   }
 

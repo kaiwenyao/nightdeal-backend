@@ -331,12 +331,20 @@ describe('RoomController', () => {
       const mockAssignments = [
         { seatNo: 1, userId: 'user-1', role: '梅林', team: 'good' as const },
       ];
-      roomService.startGame.mockResolvedValue({ assignments: mockAssignments });
+      roomService.startGame.mockResolvedValue({
+        assignments: mockAssignments,
+        gameType: GameType.AVALON,
+      });
 
       const result = await controller.startGame(mockReq, 'abcdef');
 
       expect(roomService.startGame).toHaveBeenCalledWith('ABCDEF', 'user-1');
-      expect(roomGateway.notifyClientsAfterStart).toHaveBeenCalledWith('ABCDEF', mockAssignments);
+      // gameType is forwarded so roles still reach players if the state broadcast fails.
+      expect(roomGateway.notifyClientsAfterStart).toHaveBeenCalledWith(
+        'ABCDEF',
+        mockAssignments,
+        GameType.AVALON,
+      );
       expect(result).toEqual({ success: true });
     });
   });
