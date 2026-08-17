@@ -84,10 +84,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     const key = `ws-rate:${subject}`;
 
     try {
-      const count = await this.redis.incr(key);
-      if (count === 1) {
-        await this.redis.expire(key, Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000));
-      }
+      const count = await this.redis.incrWithExpireIfFirst(
+        key,
+        Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000),
+      );
       return count > WS_RATE_LIMIT_MAX;
     } catch (error) {
       this.logger.error(`Failed to check WebSocket rate limit for ${subject}`, error);
@@ -217,7 +217,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     assignments: { userId: string; role: string }[],
   ): Promise<void> {
     const room = await this.broadcastRoomState(roomCode);
-    // room:state 必须先于 room:started：客户端靠 state 里的 gameType 决定跳 Avalon 还是 SGS。
+    // room:state must precede room:started so clients can read gameType before navigating.
     if (!room) return;
     for (const assignment of assignments) {
       this.server.to('user:' + assignment.userId).emit('room:started', {
@@ -249,9 +249,15 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     await this.broadcastRoomState(roomCode);
   }
 
-  /** After a leave/cleanup removal: evict sockets, then player-left + full room state. */
-  async notifyClientsAfterLeave(roomCode: string, userId: string): Promise<void> {
-    this.evictUserFromRoom(userId, roomCode);
+  /** After a leave/cleanup removal: optionally evict sockets, then player-left + full room state. */
+  async notifyClientsAfterLeave(
+    roomCode: string,
+    userId: string,
+    opts?: { evict?: boolean },
+  ): Promise<void> {
+    if (opts?.evict !== false) {
+      this.evictUserFromRoom(userId, roomCode);
+    }
     const playerCount = await this.roomService.getPlayerCount(roomCode);
     this.server.to(roomCode).emit('room:player-left', {
       userId,
@@ -442,7 +448,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
               return;
             }
             await this.roomService.leaveRoom(roomCode, userId);
-            await this.notifyClientsAfterLeave(roomCode, userId);
+            await this.notifyClientsAfterLeave(roomCode, userId, { evict: false });
           } catch (error) {
             this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
           }

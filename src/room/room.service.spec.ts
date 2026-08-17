@@ -597,6 +597,45 @@ describe('RoomService', () => {
       expect(mockPrisma.roomPlayer.updateMany).not.toHaveBeenCalled();
       expect(mockPrisma.gameRecord.create).not.toHaveBeenCalled();
     });
+
+    it('rolls back PLAYING when Avalon Redis init fails', async () => {
+      const avalonRoom = {
+        ...sgsRoom,
+        gameType: GameType.AVALON,
+        roleConfig: {
+          merlin: true,
+          percival: false,
+          mordred: false,
+          morgana: false,
+          oberon: false,
+          assassin: true,
+          loyalServants: 2,
+          minions: 1,
+        },
+      };
+      const playingRoom = { ...avalonRoom, status: 'PLAYING' as const };
+      const players = buildPlayers(5);
+
+      mockPrisma.room.findUnique
+        .mockResolvedValueOnce(avalonRoom)
+        .mockResolvedValueOnce(playingRoom)
+        .mockResolvedValueOnce(playingRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(players);
+      mockPrisma.gameRecord.create.mockResolvedValue({});
+      mockPrisma.gameRecord.updateMany.mockResolvedValue({ count: 1 });
+
+      service.setAvalonGameInitializer({
+        initializeGame: jest.fn().mockRejectedValue(new Error('redis down')),
+      });
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: 'Avalon 游戏状态初始化失败' });
+      expect(mockPrisma.room.update).toHaveBeenCalledWith({
+        where: { id: 'room-1' },
+        data: { status: 'WAITING' },
+      });
+    });
   });
 
   describe('joinRoom status guards', () => {

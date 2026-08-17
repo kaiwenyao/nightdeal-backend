@@ -560,6 +560,12 @@ export class RoomService {
       if (room.gameType !== GameType.SGS) {
         const initError = await this.initializeAvalonGame(room, assignments);
         if (initError) {
+          const rollback = await this.endGame(room.code, room.hostId);
+          if (rollback && 'error' in rollback) {
+            this.logger.error(
+              `Failed to roll back startGame after Avalon init failure for room ${room.code}: ${rollback.error}`,
+            );
+          }
           return initError;
         }
       }
@@ -655,7 +661,8 @@ export class RoomService {
           team: a.faction,
         }));
       } catch (e) {
-        return { error: (e as Error).message };
+        this.logger.warn(`Avalon role generation failed for room ${room.code}: ${e}`);
+        return { error: '角色分配失败，请检查角色配置' };
       }
     }
 
@@ -664,7 +671,7 @@ export class RoomService {
 
   /**
    * 事务提交后为 Avalon 房间初始化 Redis 游戏状态。
-   * 失败返回 error：DB 已是 PLAYING，调用方应提示房主结束本局后重开。
+   * 失败返回 error：调用方会 endGame 把房间滚回 WAITING。
    */
   private async initializeAvalonGame(
     room: RoomInfo,
@@ -672,7 +679,7 @@ export class RoomService {
   ): Promise<{ error: string } | void> {
     if (!this.avalonGameInitializer) {
       this.logger.warn(`Avalon game initializer not registered, skipping game-state init for room ${room.code}`);
-      return { error: 'Avalon 游戏状态初始化失败，请结束本局后重开' };
+      return { error: 'Avalon 游戏状态初始化失败' };
     }
 
     try {
@@ -691,7 +698,7 @@ export class RoomService {
       );
     } catch (error) {
       this.logger.error(`Failed to initialize avalon game state for room ${room.code}:`, error);
-      return { error: 'Avalon 游戏状态初始化失败，请结束本局后重开' };
+      return { error: 'Avalon 游戏状态初始化失败' };
     }
   }
 

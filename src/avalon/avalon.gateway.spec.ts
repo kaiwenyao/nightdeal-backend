@@ -33,8 +33,7 @@ describe('AvalonGateway', () => {
   };
 
   const mockRedis = {
-    incr: jest.fn().mockResolvedValue(1),
-    expire: jest.fn().mockResolvedValue(undefined),
+    incrWithExpireIfFirst: jest.fn().mockResolvedValue(1),
   };
 
   const roomEmit = jest.fn();
@@ -83,7 +82,7 @@ describe('AvalonGateway', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockRedis.incr.mockResolvedValue(1);
+    mockRedis.incrWithExpireIfFirst.mockResolvedValue(1);
     gateway = new AvalonGateway(
       mockAvalonService as unknown as AvalonService,
       mockRoomService as unknown as RoomService,
@@ -252,9 +251,9 @@ describe('AvalonGateway', () => {
       expect(mockAvalonService.markPlayerOffline).toHaveBeenCalledWith('ABC123', 'u1');
     });
 
-    it('does not mark offline when the user still has other sockets connected', async () => {
+    it('does not mark offline when another socket for the user is still in the same room', async () => {
       mockServer.in.mockReturnValueOnce({
-        fetchSockets: jest.fn().mockResolvedValue([{ id: 'other-sock' }]),
+        fetchSockets: jest.fn().mockResolvedValue([{ id: 'other-sock', data: { userId: 'u1' } }]),
       });
       const client = buildClient('u1');
       client.data.avalonRooms = ['ABC123'];

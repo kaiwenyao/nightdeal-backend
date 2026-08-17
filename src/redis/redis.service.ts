@@ -54,6 +54,20 @@ export class RedisService implements OnModuleDestroy {
     return this.client.incr(key);
   }
 
+  /**
+   * 固定窗口计数：INCR，仅在 count===1 时设置 TTL。
+   * Lua 保证原子性，避免 expire 失败留下无 TTL 的键，也不会把窗口滑成永续封禁。
+   */
+  async incrWithExpireIfFirst(key: string, ttlSeconds: number): Promise<number> {
+    const count = await this.client.eval(
+      "local c = redis.call('incr', KEYS[1])\nif c == 1 then redis.call('expire', KEYS[1], ARGV[1]) end\nreturn c",
+      1,
+      key,
+      ttlSeconds,
+    );
+    return Number(count);
+  }
+
   async hset(key: string, field: string, value: string): Promise<void> {
     await this.client.hset(key, field, value);
   }

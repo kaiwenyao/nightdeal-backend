@@ -1,10 +1,12 @@
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import { Logger } from '@nestjs/common';
 import { ServerOptions } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 import { ConfigService } from '@nestjs/config';
 
 export class RedisIoAdapter extends IoAdapter {
+  private readonly logger = new Logger(RedisIoAdapter.name);
   private adapterConstructor: ReturnType<typeof createAdapter>;
 
   constructor(
@@ -24,8 +26,8 @@ export class RedisIoAdapter extends IoAdapter {
 
     // redis v4 client 是 EventEmitter，未监听的 'error' 事件会作为
     // uncaughtException 打挂进程；必须在 connect 之前注册
-    pubClient.on('error', (err) => console.error('[RedisIoAdapter] pubClient error:', err));
-    subClient.on('error', (err) => console.error('[RedisIoAdapter] subClient error:', err));
+    pubClient.on('error', (err) => this.logger.error(`pubClient error: ${err.message}`));
+    subClient.on('error', (err) => this.logger.error(`subClient error: ${err.message}`));
 
     await Promise.all([pubClient.connect(), subClient.connect()]);
 

@@ -97,8 +97,7 @@ describe('RoomGateway', () => {
     };
 
     const mockRedisService = {
-      incr: jest.fn().mockResolvedValue(1),
-      expire: jest.fn().mockResolvedValue(undefined),
+      incrWithExpireIfFirst: jest.fn().mockResolvedValue(1),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -246,12 +245,11 @@ describe('RoomGateway', () => {
 
       await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(redisService.incr).toHaveBeenCalledWith('ws-rate:user:user-2');
-      expect(redisService.expire).toHaveBeenCalledWith('ws-rate:user:user-2', 1);
+      expect(redisService.incrWithExpireIfFirst).toHaveBeenCalledWith('ws-rate:user:user-2', 1);
     });
 
     it('rejects socket events when the shared Redis rate limit is exceeded', async () => {
-      redisService.incr.mockResolvedValueOnce(11);
+      redisService.incrWithExpireIfFirst.mockResolvedValueOnce(11);
 
       await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
 

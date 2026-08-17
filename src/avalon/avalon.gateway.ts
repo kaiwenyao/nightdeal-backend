@@ -102,23 +102,10 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       const userId = client.data.userId;
       if (!userId) return;
 
-      // 让 socket 离开其加入过的 avalon 房间，避免重连/跨房间时收到旧房间广播
       const joinedRooms: string[] = client.data.avalonRooms ?? [];
-      for (const roomCode of joinedRooms) {
-        client.leave(`avalon:${roomCode}`);
-      }
       client.data.avalonRooms = [];
-
-      if (joinedRooms.length === 0) return;
-
-      // 多端场景：该用户还有其他 socket 在线时不标记掉线
-      const remaining = await this.server.in('user:' + userId).fetchSockets();
-      if (remaining.length > 0) return;
-
       for (const roomCode of joinedRooms) {
-        await this.avalonService.markPlayerOffline(roomCode, userId);
-        // 广播更新后的状态，让其他玩家看到 isConnected 变化
-        await this.broadcastGameState(roomCode);
+        await this.detachFromAvalonRoom(client, roomCode, userId);
       }
     } catch (error) {
       this.logger.error(`Error handling avalon disconnect for socket ${client.id}:`, error);
@@ -132,10 +119,10 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const key = `ws-avalon-rate:${subject}`;
 
     try {
-      const count = await this.redis.incr(key);
-      // 无条件续期 TTL：只在 count===1 时 expire 会在 expire 失败等边界下
-      // 留下无 TTL 的键，导致该用户被永久限流。
-      await this.redis.expire(key, Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000));
+      const count = await this.redis.incrWithExpireIfFirst(
+        key,
+        Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000),
+      );
       return count > WS_RATE_LIMIT_MAX;
     } catch (error) {
       this.logger.error(`Failed to check rate limit for ${subject}`, error);
@@ -148,7 +135,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     client.leave(`avalon:${roomCode}`);
     try {
       const remaining = await this.server.in(`avalon:${roomCode}`).fetchSockets();
-      if (remaining.some(s => s.data?.userId === userId)) {
+      if (remaining.some(s => s.id !== client.id && s.data?.userId === userId)) {
         return;
       }
       await this.avalonService.markPlayerOffline(roomCode, userId);
