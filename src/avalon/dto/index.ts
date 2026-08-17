@@ -64,3 +64,12 @@ export class GetPlayerViewDto {
   @IsNotEmpty()
   roomCode!: string;
 }
+
+/**
+ * 房主确认身份揭示结束，进入组队
+ */
+export class BeginGameDto {
+  @IsString()
+  @IsNotEmpty()
+  roomCode!: string;
+}

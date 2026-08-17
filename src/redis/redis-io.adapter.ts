@@ -17,7 +17,7 @@ export class RedisIoAdapter extends IoAdapter {
   async connectToRedis(): Promise<void> {
     const redisUrl = this.configService?.get('REDIS_URL') || 'redis://localhost:6379';
 
-    // 指数退避重连，封顶 5s
+    // 线性退避重连，封顶 5s
     const reconnectStrategy = (retries: number) => Math.min(retries * 200, 5000);
     const pubClient = createClient({ url: redisUrl, socket: { reconnectStrategy } });
     const subClient = pubClient.duplicate();

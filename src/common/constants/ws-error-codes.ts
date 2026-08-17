@@ -9,3 +9,12 @@ export const WsErrorCode = {
 } as const;
 
 export type WsErrorCode = (typeof WsErrorCode)[keyof typeof WsErrorCode];
+
+const NAMESPACE_ERROR_EVENTS: Record<string, string> = {
+  '/avalon': 'avalon:error',
+  '/room': 'room:error',
+};
+
+export function wsErrorEvent(namespace?: string): string {
+  return NAMESPACE_ERROR_EVENTS[namespace ?? ''] ?? 'room:error';
+}

@@ -10,6 +10,7 @@ import {
   getRequiredFailCount,
   getQuestConfig,
   createInitialState,
+  beginGame,
   proposeTeam,
   submitTeamVote,
   resolveTeamVote,
@@ -222,6 +223,40 @@ describe('Game Engine', () => {
   });
 
   // ==================== 游戏状态操作测试 ====================
+
+  describe('beginGame', () => {
+    const players: AvalonPlayer[] = [
+      { id: 'p1', name: 'Player 1', seatNo: 1, isHost: true, isConnected: true, role: 'Merlin', faction: 'good' },
+      { id: 'p2', name: 'Player 2', seatNo: 2, isHost: false, isConnected: true, role: 'Percival', faction: 'good' },
+    ];
+    const baseState: AvalonGameState = {
+      roomId: 'test-room',
+      phase: 'role_reveal',
+      players,
+      config: DEFAULT_AVALON_CONFIG,
+      leaderIndex: 0,
+      round: 1,
+      rejectedTeamVoteCount: 0,
+      proposedTeam: [],
+      teamVotes: {},
+      questActions: {},
+      questHistory: [],
+      goodScore: 0,
+      evilScore: 0,
+    };
+
+    it('advances host from role_reveal to team_building', () => {
+      expect(beginGame(baseState, 'p1').phase).toBe('team_building');
+    });
+
+    it('rejects a non-host', () => {
+      expect(() => beginGame(baseState, 'p2')).toThrow('仅房主可以开始任务阶段');
+    });
+
+    it('rejects when not in role_reveal', () => {
+      expect(() => beginGame({ ...baseState, phase: 'team_building' }, 'p1')).toThrow('当前不是身份揭示阶段');
+    });
+  });
 
   describe('proposeTeam', () => {
     let state: AvalonGameState;

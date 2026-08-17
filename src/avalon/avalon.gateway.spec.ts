@@ -169,8 +169,10 @@ describe('AvalonGateway', () => {
 
   describe('handleBegin', () => {
     it('broadcasts state and phase-changed on success', async () => {
+      mockRoomService.getPlayer.mockResolvedValue({ userId: 'u1' });
       mockAvalonService.beginGame.mockResolvedValue({ success: true });
       mockAvalonService.getAllPlayerViews.mockResolvedValue(new Map());
+      mockAvalonService.getGameState.mockResolvedValue({ phase: 'team_building', round: 1 });
       const client = buildClient('u1');
 
       await gateway.handleBegin(client as never, { roomCode: 'ABC123' });
@@ -184,6 +186,7 @@ describe('AvalonGateway', () => {
     });
 
     it('emits avalon:error when service rejects (e.g. non-host or wrong phase)', async () => {
+      mockRoomService.getPlayer.mockResolvedValue({ userId: 'u2' });
       mockAvalonService.beginGame.mockResolvedValue({ error: '仅房主可以开始任务阶段' });
       const client = buildClient('u2');
 
@@ -194,6 +197,45 @@ describe('AvalonGateway', () => {
         message: '仅房主可以开始任务阶段',
       });
       expect(roomEmit).not.toHaveBeenCalled();
+    });
+
+    it('rejects begin from a player who is not in the room', async () => {
+      mockRoomService.getPlayer.mockResolvedValue(null);
+      const client = buildClient('u1');
+
+      await gateway.handleBegin(client as never, { roomCode: 'ABC123' });
+
+      expect(mockAvalonService.beginGame).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith('avalon:error', {
+        code: WsErrorCode.ROOM_NOT_FOUND,
+        message: '你不在这个房间中',
+      });
+    });
+  });
+
+  describe('handleLeaveGame', () => {
+    it('marks the player offline and broadcasts when no other sockets remain', async () => {
+      mockAvalonService.getAllPlayerViews.mockResolvedValue(new Map());
+      const client = buildClient('u1');
+      client.data.avalonRooms = ['ABC123'];
+
+      await gateway.handleLeaveGame(client as never, { roomCode: 'ABC123' });
+
+      expect(client.leave).toHaveBeenCalledWith('avalon:ABC123');
+      expect(client.data.avalonRooms).toEqual([]);
+      expect(mockAvalonService.markPlayerOffline).toHaveBeenCalledWith('ABC123', 'u1');
+    });
+
+    it('does not mark offline when another socket for the user is still in the room', async () => {
+      mockServer.in.mockReturnValueOnce({
+        fetchSockets: jest.fn().mockResolvedValue([{ id: 'other-sock', data: { userId: 'u1' } }]),
+      });
+      const client = buildClient('u1');
+      client.data.avalonRooms = ['ABC123'];
+
+      await gateway.handleLeaveGame(client as never, { roomCode: 'ABC123' });
+
+      expect(mockAvalonService.markPlayerOffline).not.toHaveBeenCalled();
     });
   });
 

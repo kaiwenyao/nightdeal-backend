@@ -25,6 +25,7 @@ import {
   assignRoles,
   getFaction,
   createInitialState,
+  beginGame as engineBeginGame,
   proposeTeam as engineProposeTeam,
   submitTeamVote as engineSubmitTeamVote,
   resolveTeamVote as engineResolveTeamVote,
@@ -43,17 +44,23 @@ export class AvalonService {
   // 每个房间一条 Promise 链，把同一 roomCode 的写操作串行化：
   // 弱网下两名玩家同时提交最后一票时，两次 resolve 会排队执行，
   // 后到的 resolve 因引擎阶段校验失败而安全落空，不会双重计分。
+  // 进程内锁，当前按单实例部署；多实例需要换成 Redis SET NX EX。
   private roomChains = new Map<string, Promise<unknown>>();
 
   constructor(private redis: RedisService) {}
 
   /**
-   * 串行执行同一房间的写操作
+   * 串行执行同一房间的写操作（进程内）。链结束后删掉 Map 条目，避免房间码常驻。
    */
   private withRoomLock<T>(roomCode: string, fn: () => Promise<T>): Promise<T> {
     const chained = (this.roomChains.get(roomCode) ?? Promise.resolve()).then(fn);
-    // 链上挂一个吞掉错误的续链，保证一次失败不会卡死后续所有操作
-    this.roomChains.set(roomCode, chained.catch(() => undefined));
+    const tracked = chained.catch(() => undefined);
+    this.roomChains.set(roomCode, tracked);
+    void tracked.finally(() => {
+      if (this.roomChains.get(roomCode) === tracked) {
+        this.roomChains.delete(roomCode);
+      }
+    });
     return chained;
   }
 
@@ -84,6 +91,7 @@ export class AvalonService {
    */
   async deleteGameState(roomCode: string): Promise<void> {
     await this.redis.del(`avalon:${roomCode}:state`);
+    this.roomChains.delete(roomCode);
   }
 
   // ==================== 游戏初始化 ====================
@@ -182,14 +190,15 @@ export class AvalonService {
     return this.withRoomLock(roomCode, async () => {
       const state = await this.getGameState(roomCode);
       if (!state) return { error: '游戏不存在' };
-      if (state.phase !== 'role_reveal') return { error: '当前不是身份揭示阶段' };
 
-      const host = state.players.find(p => p.id === hostId);
-      if (!host || !host.isHost) return { error: '仅房主可以开始任务阶段' };
-
-      await this.saveGameState(roomCode, { ...state, phase: 'team_building' });
-      this.logger.log(`Room ${roomCode} advanced to team_building by host ${hostId}`);
-      return { success: true };
+      try {
+        const newState = engineBeginGame(state, hostId);
+        await this.saveGameState(roomCode, newState);
+        this.logger.log(`Room ${roomCode} advanced to team_building by host ${hostId}`);
+        return { success: true };
+      } catch (error) {
+        return { error: (error as Error).message };
+      }
     });
   }
 

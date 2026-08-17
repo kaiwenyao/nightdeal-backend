@@ -36,13 +36,16 @@ async function bootstrap() {
         '如需浏览器/H5 跨域调试，请配置 CORS_ORIGIN（支持逗号分隔多个来源）。',
     );
   }
+  let corsOrigin: string | string[];
+  if (corsOrigins.length > 0) {
+    corsOrigin = corsOrigins;
+  } else if (enableCredentials) {
+    corsOrigin = [];
+  } else {
+    corsOrigin = '*';
+  }
   app.enableCors({
-    origin:
-      corsOrigins.length > 0
-        ? corsOrigins
-        : enableCredentials
-          ? []
-          : '*',
+    origin: corsOrigin,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: enableCredentials,
   });

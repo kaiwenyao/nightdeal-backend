@@ -330,7 +330,7 @@ describe('RoomGateway', () => {
     it('emits settings-updated then room:state', async () => {
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
-      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
+      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(null);
 
       await gateway.notifyClientsAfterSettingsUpdate('ABCDEF', 8, mockRoom.roleConfig, false);
 
@@ -349,7 +349,7 @@ describe('RoomGateway', () => {
       roomService.endGame.mockResolvedValue({ success: true });
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
-      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
+      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(null);
 
       await gateway.handleEnd(mockClient, { roomCode: 'ABCDEF' });
 

@@ -216,11 +216,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     roomCode: string,
     assignments: { userId: string; role: string }[],
   ): Promise<void> {
-    // Broadcast room state FIRST so clients have the correct gameType
-    // before room:started triggers game-page navigation.
-    await this.broadcastRoomState(roomCode);
-
-    const room = await this.roomService.getRoom(roomCode);
+    const room = await this.broadcastRoomState(roomCode);
     const gameType = room?.gameType ?? 'AVALON';
     for (const assignment of assignments) {
       this.server.to('user:' + assignment.userId).emit('room:started', {
@@ -252,8 +248,9 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     await this.broadcastRoomState(roomCode);
   }
 
-  /** After a leave/kick/cleanup removal: player-left then full room state. */
+  /** After a leave/cleanup removal: evict sockets, then player-left + full room state. */
   async notifyClientsAfterLeave(roomCode: string, userId: string): Promise<void> {
+    this.evictUserFromRoom(userId, roomCode);
     const playerCount = await this.roomService.getPlayerCount(roomCode);
     this.server.to(roomCode).emit('room:player-left', {
       userId,
@@ -283,9 +280,6 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
     await this.roomService.leaveRoom(payload.roomCode, userId);
 
-    this.evictUserFromRoom(userId, payload.roomCode);
-
-    // Emit player-left event to all remaining clients in the room
     await this.notifyClientsAfterLeave(payload.roomCode, userId);
   }
 
@@ -482,11 +476,11 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
   }
 
-  async broadcastRoomState(roomCode: string): Promise<void> {
+  async broadcastRoomState(roomCode: string): Promise<RoomInfo | null> {
     const room = await this.roomService.getRoom(roomCode);
     if (!room) {
       this.logger.warn(`Cannot broadcast room state: room ${roomCode} not found`);
-      return;
+      return null;
     }
     const players = await this.roomService.getPlayers(roomCode);
     // Strip role from players before broadcasting — roles are delivered
@@ -496,5 +490,6 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     const socketCount = roomSockets ? roomSockets.size : 0;
     this.logger.debug(`Broadcasting room:state to ${socketCount} clients in room ${roomCode}`);
     this.server.to(roomCode).emit('room:state', { room, players: safePlayers });
+    return room;
   }
 }

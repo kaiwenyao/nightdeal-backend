@@ -258,6 +258,20 @@ export function createInitialState(
 }
 
 /**
+ * 房主确认身份揭示结束，进入组队阶段
+ */
+export function beginGame(state: AvalonGameState, hostId: PlayerId): AvalonGameState {
+  if (state.phase !== 'role_reveal') {
+    throw new Error('当前不是身份揭示阶段');
+  }
+  const host = state.players.find(p => p.id === hostId);
+  if (!host || !host.isHost) {
+    throw new Error('仅房主可以开始任务阶段');
+  }
+  return { ...state, phase: 'team_building' };
+}
+
+/**
  * 提议任务队伍
  * @param state 当前游戏状态
  * @param leaderId 队长 ID

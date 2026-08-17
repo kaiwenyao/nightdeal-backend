@@ -27,6 +27,7 @@ import {
   SubmitQuestActionDto,
   AssassinateDto,
   GetPlayerViewDto,
+  BeginGameDto,
 } from './dto';
 import { AvalonGameState, PlayerView, TeamVote, QuestAction, PlayerId } from './types';
 import { getPlayerView } from './visibility';
@@ -217,6 +218,18 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const joinedRooms: string[] = client.data.avalonRooms ?? [];
     client.data.avalonRooms = joinedRooms.filter(code => code !== payload.roomCode);
     this.logger.debug(`User ${userId} left game room ${payload.roomCode}`);
+
+    try {
+      // 同一用户若还有其他 socket 留在该 avalon 房间，不算离线
+      const remaining = await this.server.in(`avalon:${payload.roomCode}`).fetchSockets();
+      if (remaining.some(s => s.data?.userId === userId)) {
+        return;
+      }
+      await this.avalonService.markPlayerOffline(payload.roomCode, userId);
+      await this.broadcastGameState(payload.roomCode);
+    } catch (error) {
+      this.logger.error(`Error handling avalon:leave for user ${userId} room ${payload.roomCode}:`, error);
+    }
   }
 
   /**
@@ -225,7 +238,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   @SubscribeMessage('avalon:begin')
   async handleBegin(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: GetPlayerViewDto,
+    @MessageBody() payload: BeginGameDto,
   ) {
     if (await this.isRateLimited(client)) {
       client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁' });
@@ -234,6 +247,12 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     const userId = client.data.userId;
 
+    const player = await this.roomService.getPlayer(payload.roomCode, userId);
+    if (!player) {
+      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
+      return;
+    }
+
     try {
       const result = await this.avalonService.beginGame(payload.roomCode, userId);
       if ('error' in result) {
@@ -241,12 +260,12 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         return;
       }
 
-      // 广播新状态（每个玩家收到自己的视角）
       await this.broadcastGameState(payload.roomCode);
 
+      const state = await this.avalonService.getGameState(payload.roomCode);
       this.server.to(`avalon:${payload.roomCode}`).emit('avalon:phase-changed', {
-        phase: 'team_building',
-        round: 1,
+        phase: state?.phase,
+        round: state?.round,
       });
     } catch (error) {
       this.logger.error(`Error handling avalon:begin for user ${userId} room ${payload.roomCode}:`, error);

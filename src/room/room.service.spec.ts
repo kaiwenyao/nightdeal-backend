@@ -807,11 +807,14 @@ describe('RoomService', () => {
       mockRedis.get.mockImplementation(async (key: string) =>
         key.endsWith(':u-2') ? '1' : null,
       );
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({
+        id: 'p-3', roomId: 'room-1', userId: 'u-3', seatNo: 3,
+      });
 
       await service.markPlayerOffline('ABCDEF', 'host-1');
 
-      expect(mockPrisma.room.update).toHaveBeenCalledWith({
-        where: { id: 'room-1' },
+      expect(mockPrisma.room.updateMany).toHaveBeenCalledWith({
+        where: { id: 'room-1', status: 'PLAYING', hostId: 'host-1' },
         data: { hostId: 'u-3' },
       });
     });

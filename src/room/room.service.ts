@@ -393,6 +393,18 @@ export class RoomService {
     // If the host is leaving, transfer host to another member, preferring an
     // online one (smallest seatNo as tie-breaker) so room management stays usable.
     if (room.hostId === userId) {
+      const remainingPreview = await this.prisma.roomPlayer.findMany({
+        where: { roomId: room.id, userId: { not: userId } },
+        orderBy: { seatNo: 'asc' },
+      });
+      const offlineByUserId = new Map(
+        await Promise.all(
+          remainingPreview.map(async (p) =>
+            [p.userId, await this.isPlayerOffline(roomCode, p.userId)] as const,
+          ),
+        ),
+      );
+
       const result = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const remainingPlayers = await tx.roomPlayer.findMany({
           where: { roomId: room.id, userId: { not: userId } },
@@ -401,7 +413,7 @@ export class RoomService {
         if (remainingPlayers.length > 0) {
           let newHostId = remainingPlayers[0].userId;
           for (const candidate of remainingPlayers) {
-            if (!(await this.isPlayerOffline(roomCode, candidate.userId))) {
+            if (!offlineByUserId.get(candidate.userId)) {
               newHostId = candidate.userId;
               break;
             }
@@ -546,7 +558,10 @@ export class RoomService {
       // 角色分配已在事务内由 avalon 引擎计算并持久化，这里复用同一份分配，
       // 保证 avalon 游戏状态与 roomPlayer.role（即 room:started 的 yourRole）一致。
       if (room.gameType !== GameType.SGS) {
-        await this.initializeAvalonGame(room, assignments);
+        const initError = await this.initializeAvalonGame(room, assignments);
+        if (initError) {
+          return initError;
+        }
       }
 
       return { assignments };
@@ -649,16 +664,15 @@ export class RoomService {
 
   /**
    * 事务提交后为 Avalon 房间初始化 Redis 游戏状态。
-   * 失败只记日志不回滚：DB 中的角色分配已生效，avalon 状态缺失时应由
-   * 运维/重开机制处理，不能让进程崩溃或让 startGame 返回不一致的结果。
+   * 失败返回 error：DB 已是 PLAYING，调用方应提示房主结束本局后重开。
    */
   private async initializeAvalonGame(
     room: RoomInfo,
     assignments: RoleAssignment[],
-  ): Promise<void> {
+  ): Promise<{ error: string } | void> {
     if (!this.avalonGameInitializer) {
       this.logger.warn(`Avalon game initializer not registered, skipping game-state init for room ${room.code}`);
-      return;
+      return { error: 'Avalon 游戏状态初始化失败，请结束本局后重开' };
     }
 
     try {
@@ -677,6 +691,7 @@ export class RoomService {
       );
     } catch (error) {
       this.logger.error(`Failed to initialize avalon game state for room ${room.code}:`, error);
+      return { error: 'Avalon 游戏状态初始化失败，请结束本局后重开' };
     }
   }
 
@@ -725,11 +740,21 @@ export class RoomService {
         const successor = players.find((p) => p.userId !== userId && p.isOnline)
           ?? players.find((p) => p.userId !== userId);
         if (successor) {
-          await this.prisma.room.update({
-            where: { id: room.id },
-            data: { hostId: successor.userId },
+          const transferred = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            const stillMember = await tx.roomPlayer.findFirst({
+              where: { roomId: room.id, userId: successor.userId },
+            });
+            if (!stillMember) {
+              return { count: 0 };
+            }
+            return tx.room.updateMany({
+              where: { id: room.id, status: 'PLAYING', hostId: userId },
+              data: { hostId: successor.userId },
+            });
           });
-          this.logger.log(`Transferred host of PLAYING room ${roomCode} from offline ${userId} to ${successor.userId}`);
+          if (transferred.count > 0) {
+            this.logger.log(`Transferred host of PLAYING room ${roomCode} from offline ${userId} to ${successor.userId}`);
+          }
         }
       }
     }
