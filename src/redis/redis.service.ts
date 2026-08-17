@@ -102,18 +102,29 @@ export class RedisService implements OnModuleDestroy {
     lease: RedisLockLease,
     key: string,
     value: string,
-    expirySeconds: number,
+    expirySeconds?: number,
   ): Promise<void> {
     const written = await this.client.eval(
-      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end\nredis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3])\nreturn 1",
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end\nif tonumber(ARGV[3]) > 0 then redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3]) else redis.call('set', KEYS[2], ARGV[2]) end\nreturn 1",
       2,
       lease.key,
       key,
       lease.token,
       value,
-      expirySeconds,
+      expirySeconds ?? 0,
     );
     if (Number(written) !== 1) throw new Error('LOCK_LOST');
+  }
+
+  async delWithLock(lease: RedisLockLease, key: string): Promise<void> {
+    const deleted = await this.client.eval(
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return -1 end\nreturn redis.call('del', KEYS[2])",
+      2,
+      lease.key,
+      key,
+      lease.token,
+    );
+    if (Number(deleted) < 0) throw new Error('LOCK_LOST');
   }
 
   async del(key: string): Promise<void> {

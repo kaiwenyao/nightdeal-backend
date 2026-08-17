@@ -124,7 +124,9 @@ export class AvalonService {
    */
   async deleteGameState(roomCode: string): Promise<void> {
     return this.withRoomLock(roomCode, async () => {
-      await this.redis.del(`avalon:${roomCode}:state`);
+      const lease = this.roomLeases.get(roomCode);
+      if (!lease) throw new Error('Avalon state delete attempted without room lock');
+      await this.redis.delWithLock(lease, `avalon:${roomCode}:state`);
     });
   }
 

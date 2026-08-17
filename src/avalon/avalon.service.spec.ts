@@ -29,6 +29,10 @@ describe('AvalonService', () => {
       store.delete(key);
       return Promise.resolve();
     }),
+    delWithLock: jest.fn((_lease: unknown, key: string) => {
+      store.delete(key);
+      return Promise.resolve();
+    }),
     expire: jest.fn().mockResolvedValue(undefined),
     incr: jest.fn().mockResolvedValue(1),
     hset: jest.fn().mockResolvedValue(undefined),
@@ -243,6 +247,14 @@ describe('AvalonService', () => {
 
       await expect(service.beginGame('ABC123', 'u1')).resolves.toEqual({ error: 'LOCK_LOST' });
       expect((await service.getGameState('ABC123'))?.phase).toBe('role_reveal');
+    });
+
+    it('does not delete successor state after the Redis lease is lost', async () => {
+      await initGame();
+      mockRedis.delWithLock.mockRejectedValueOnce(new Error('LOCK_LOST'));
+
+      await expect(service.deleteGameState('ABC123')).rejects.toThrow('LOCK_LOST');
+      expect(await service.getGameState('ABC123')).not.toBeNull();
     });
   });
 

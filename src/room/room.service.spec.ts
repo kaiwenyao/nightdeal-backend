@@ -44,7 +44,9 @@ describe('RoomService', () => {
     hget: jest.fn().mockResolvedValue(null),
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue(undefined),
+    setWithLock: jest.fn().mockResolvedValue(undefined),
     del: jest.fn().mockResolvedValue(undefined),
+    delWithLock: jest.fn().mockResolvedValue(undefined),
     expire: jest.fn().mockResolvedValue(undefined),
     withLock: jest.fn().mockImplementation(async (_key: string, _ttl: number, fn: () => Promise<unknown>) => fn()),
   };
@@ -460,7 +462,11 @@ describe('RoomService', () => {
         expect.objectContaining({ data: expect.objectContaining({ hostId: expect.anything() }) }),
       );
       expect(mockPrisma.room.delete).not.toHaveBeenCalled();
-      expect(mockRedis.set).toHaveBeenCalledWith('room:ABCDEF:offline:host-1', expect.any(String));
+      expect(mockRedis.setWithLock).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'lock:room:ABCDEF:presence:host-1' }),
+        'room:ABCDEF:offline:host-1',
+        expect.any(String),
+      );
     });
   });
 
@@ -493,8 +499,27 @@ describe('RoomService', () => {
         where: { id: 'room-1', status: 'PLAYING' },
         data: { status: 'WAITING' },
       });
-      expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
+      expect(mockRedis.delWithLock).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'lock:avalon:ABCDEF:state' }),
+        'avalon:ABCDEF:state',
+      );
       expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith('room:ABCDEF', 'status', expect.anything(), expect.anything());
+    });
+
+    it('does not reset a successor game when the captured generation is already ended', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockPlayingRoom);
+      mockPrisma.gameRecord.findFirst.mockResolvedValue({ id: 'game-old' });
+      mockPrisma.gameRecord.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const result = await service.endGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: '游戏状态已变更，请刷新后重试' });
+      expect(mockPrisma.gameRecord.updateMany).toHaveBeenCalledWith({
+        where: { id: 'game-old', roomId: 'room-1', endedAt: null },
+        data: { endedAt: expect.any(Date) },
+      });
+      expect(mockPrisma.roomPlayer.updateMany).not.toHaveBeenCalled();
+      expect(mockRedis.delWithLock).not.toHaveBeenCalled();
     });
 
     it('non-existent room → returns error', async () => {
@@ -678,7 +703,10 @@ describe('RoomService', () => {
         where: { id: 'room-1', status: 'PLAYING' },
         data: { status: 'WAITING' },
       });
-      expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
+      expect(mockRedis.delWithLock).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'lock:avalon:ABCDEF:state' }),
+        'avalon:ABCDEF:state',
+      );
     });
 
     it('performs full generation-guarded DB cleanup when the reset Redis lock fails', async () => {
@@ -718,6 +746,42 @@ describe('RoomService', () => {
       expect(mockPrisma.room.updateMany).toHaveBeenCalledWith({
         where: { id: 'room-1', status: 'PLAYING' },
         data: { status: 'WAITING' },
+      });
+    });
+
+    it('does not delete Redis state when failed-start fallback no longer owns that generation', async () => {
+      const avalonRoom = {
+        ...sgsRoom,
+        gameType: GameType.AVALON,
+        roleConfig: {
+          merlin: true, percival: false, mordred: false, morgana: false,
+          oberon: false, assassin: true, loyalServants: 2, minions: 1,
+        },
+      };
+      mockPrisma.room.findUnique
+        .mockResolvedValueOnce(avalonRoom)
+        .mockResolvedValueOnce(avalonRoom)
+        .mockResolvedValue({ ...avalonRoom, status: 'PLAYING' });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(buildPlayers(5));
+      mockPrisma.gameRecord.updateMany
+        .mockResolvedValueOnce({ count: 0 }) // start's legacy-record cleanup
+        .mockResolvedValueOnce({ count: 0 }); // stale generation CAS
+      service.setAvalonGameInitializer({
+        initializeGame: jest.fn().mockRejectedValue(new Error('redis down')),
+      });
+      mockRedis.withLock.mockImplementation(async (key: string, _ttl: number, fn: (lease: unknown) => Promise<unknown>) => {
+        if (key.startsWith('lock:avalon:')) throw new Error('LOCK_BUSY');
+        return fn({ key, token: 'test-token' });
+      });
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: 'Avalon 游戏状态初始化失败' });
+      expect(mockRedis.delWithLock).not.toHaveBeenCalled();
+      expect(mockRedis.del).not.toHaveBeenCalledWith('avalon:ABCDEF:state');
+      expect(mockPrisma.roomPlayer.updateMany).not.toHaveBeenCalledWith({
+        where: { roomId: 'room-1' },
+        data: { role: null },
       });
     });
 
@@ -1023,8 +1087,11 @@ describe('RoomService', () => {
 
       await service.markPlayerOffline('ABCDEF', 'u-1');
 
-      expect(mockRedis.set).toHaveBeenCalledWith('room:ABCDEF:offline:u-1', expect.any(String));
-      expect(mockRedis.set.mock.calls[0]).toHaveLength(2);
+      expect(mockRedis.setWithLock).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'lock:room:ABCDEF:presence:u-1' }),
+        'room:ABCDEF:offline:u-1',
+        expect.any(String),
+      );
     });
 
     it('transfers host to an online member when the host goes offline mid-game', async () => {

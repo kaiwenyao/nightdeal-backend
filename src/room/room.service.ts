@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException, Logger, 
 import { Cron } from '@nestjs/schedule';
 import { GameType, Prisma } from '../../prisma/generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service';
-import { RedisService } from '../redis/redis.service';
+import { RedisLockLease, RedisService } from '../redis/redis.service';
 import { RoleConfig, roleConfigSchema, getDefaultConfig, PartialRoleConfig } from './role-config.schema';
 import { RoleAssignment } from './role-assigner';
 import {
@@ -470,7 +470,12 @@ export class RoomService {
     };
   }
 
-  async leaveRoom(roomCode: string, userId: string, skipOfflineMark = false): Promise<LeaveOutcome> {
+  async leaveRoom(
+    roomCode: string,
+    userId: string,
+    skipOfflineMark = false,
+    presenceLease?: RedisLockLease,
+  ): Promise<LeaveOutcome> {
     const room = await this.getRoom(roomCode);
     if (!room) return 'not_found';
 
@@ -542,7 +547,7 @@ export class RoomService {
 
       if ('deleted' in result && result.deleted) {
         await this.redis.del(`room:${roomCode}`);
-        await this.redis.del(`room:${roomCode}:offline:${userId}`);
+        await this.deleteOfflineMarker(roomCode, userId, presenceLease);
         return 'removed';
       }
     } else {
@@ -573,8 +578,18 @@ export class RoomService {
       if (leaving === 'not_found') return 'not_found';
     }
 
-    await this.redis.del(`room:${roomCode}:offline:${userId}`);
+    await this.deleteOfflineMarker(roomCode, userId, presenceLease);
     return 'removed';
+  }
+
+  private async deleteOfflineMarker(
+    roomCode: string,
+    userId: string,
+    lease?: RedisLockLease,
+  ): Promise<void> {
+    const key = `room:${roomCode}:offline:${userId}`;
+    if (lease) await this.redis.delWithLock(lease, key);
+    else await this.redis.del(key);
   }
 
   async kickPlayer(roomCode: string, hostId: string, targetUserId: string): Promise<{ success: true } | { error: string }> {
@@ -749,7 +764,8 @@ export class RoomService {
             if (current?.status === 'PLAYING') {
               rollbackOk = await this.resetRoomToWaiting(current, gameRecordId);
             } else {
-              await this.deleteAvalonStateBestEffort(room.code);
+              // A non-PLAYING room makes any stale state inert. Do not perform
+              // an unfenced delete that could target a successor generation.
               rollbackOk = true;
             }
           } catch (rollbackErr) {
@@ -763,8 +779,9 @@ export class RoomService {
           // never diverge; stale Redis state is inert while DB is WAITING.
           if (!rollbackOk) {
             try {
-              await this.resetRoomDatabase(room, gameRecordId);
-              await this.deleteAvalonStateBestEffort(room.code);
+              // No state lease is available here. Repair only the exact DB
+              // generation; stale Redis state is inert while DB is WAITING.
+              rollbackOk = await this.resetRoomDatabase(room, gameRecordId);
             } catch (forceErr) {
               this.logger.error(
                 `CRITICAL: Room ${room.code} may be stuck in PLAYING with no Avalon state after rollback failure:`,
@@ -808,8 +825,16 @@ export class RoomService {
     if (!room) return { error: '房间不存在' };
     if (room.hostId !== hostId) return { error: '仅房主可以结束游戏' };
     if (room.status !== 'PLAYING') return { error: '游戏尚未开始' };
+    // Capture the generation immediately after acquiring the lifecycle lease.
+    // If this owner later loses the lease, the reset CAS cannot target a newer game.
+    const activeGame = await this.prisma.gameRecord.findFirst({
+      where: { roomId: room.id, endedAt: null },
+      orderBy: { startedAt: 'desc' },
+      select: { id: true },
+    });
+    if (!activeGame) return { error: '当前游戏记录不存在，请刷新后重试' };
 
-    const reset = await this.resetRoomToWaiting(room, undefined, hostId);
+    const reset = await this.resetRoomToWaiting(room, activeGame.id, hostId);
     return reset ? { success: true } : { error: '游戏状态已变更，请刷新后重试' };
   }
 
@@ -818,9 +843,9 @@ export class RoomService {
     expectedGameRecordId?: string,
     requiredHostId?: string,
   ): Promise<boolean> {
-    return this.redis.withLock(`lock:avalon:${room.code}:state`, 30_000, async () => {
+    return this.redis.withLock(`lock:avalon:${room.code}:state`, 30_000, async (lease) => {
       const reset = await this.resetRoomDatabase(room, expectedGameRecordId, requiredHostId);
-      if (reset) await this.deleteAvalonStateBestEffort(room.code);
+      if (reset) await this.deleteAvalonState(room.code, lease);
       return reset;
     });
   }
@@ -870,10 +895,11 @@ export class RoomService {
     });
   }
 
-  private async deleteAvalonStateBestEffort(roomCode: string): Promise<void> {
+  private async deleteAvalonState(roomCode: string, lease: RedisLockLease): Promise<void> {
     try {
-      await this.redis.del(`avalon:${roomCode}:state`);
+      await this.redis.delWithLock(lease, `avalon:${roomCode}:state`);
     } catch (error) {
+      if ((error as Error).message === 'LOCK_LOST') throw error;
       this.logger.error(`Failed to delete Avalon state for ended room ${roomCode}:`, error);
     }
   }
@@ -1003,18 +1029,28 @@ export class RoomService {
     return player?.role || null;
   }
 
-  async markPlayerOffline(roomCode: string, userId: string, presenceLocked = false): Promise<void> {
+  async markPlayerOffline(
+    roomCode: string,
+    userId: string,
+    presenceLocked = false,
+    presenceLease?: RedisLockLease,
+  ): Promise<void> {
     if (!presenceLocked) {
       return this.redis.withLock(
         `lock:room:${roomCode}:presence:${userId}`,
         10_000,
-        () => this.markPlayerOffline(roomCode, userId, true),
+        (lease) => this.markPlayerOffline(roomCode, userId, true, lease),
       );
     }
+    if (!presenceLease) throw new Error('Presence update attempted without lock lease');
     const room = await this.getRoom(roomCode);
     // No TTL: the marker lives until the player leaves/reconnects or the room
     // is deleted. A TTL would let a still-disconnected player "revive" as online.
-    await this.redis.set(`room:${roomCode}:offline:${userId}`, Date.now().toString());
+    await this.redis.setWithLock(
+      presenceLease,
+      `room:${roomCode}:offline:${userId}`,
+      Date.now().toString(),
+    );
     if (room) {
       await this.prisma.room.update({
         where: { id: room.id },
@@ -1059,16 +1095,22 @@ export class RoomService {
     }
   }
 
-  async markPlayerOnline(roomCode: string, userId: string, presenceLocked = false): Promise<void> {
+  async markPlayerOnline(
+    roomCode: string,
+    userId: string,
+    presenceLocked = false,
+    presenceLease?: RedisLockLease,
+  ): Promise<void> {
     if (!presenceLocked) {
       return this.redis.withLock(
         `lock:room:${roomCode}:presence:${userId}`,
         10_000,
-        () => this.markPlayerOnline(roomCode, userId, true),
+        (lease) => this.markPlayerOnline(roomCode, userId, true, lease),
       );
     }
+    if (!presenceLease) throw new Error('Presence update attempted without lock lease');
     const room = await this.getRoom(roomCode);
-    await this.redis.del(`room:${roomCode}:offline:${userId}`);
+    await this.redis.delWithLock(presenceLease, `room:${roomCode}:offline:${userId}`);
     if (room) {
       await this.prisma.room.update({
         where: { id: room.id },
@@ -1216,12 +1258,12 @@ export class RoomService {
         await this.redis.withLock(
           `lock:room:${room.code}:presence:${player.userId}`,
           10_000,
-          async () => {
+          async (lease) => {
             // A reconnect takes the same presence lock and deletes this marker.
             // Re-read it under the lock so a stale getPlayers() snapshot cannot
             // remove a player who came back during this cron run.
             if (await this.redis.get(markerKey) !== marker) return;
-            await this.leaveRoom(room.code, player.userId, true);
+            await this.leaveRoom(room.code, player.userId, true, lease);
             if (await this.getPlayer(room.code, player.userId)) return;
 
             this.logger.log(`Removed offline player ${player.userId} from room ${room.code}`);
@@ -1252,7 +1294,7 @@ export class RoomService {
       // Serialize the final activity check and deletion against every Avalon
       // state mutation, including actions from /avalon sockets when all /room
       // sockets appear offline.
-      await this.redis.withLock(`lock:avalon:${room.code}:state`, 30_000, async () => {
+      await this.redis.withLock(`lock:avalon:${room.code}:state`, 30_000, async (lease) => {
         const lastActiveAtStr = await this.redis.hget(`room:${room.code}`, 'lastActiveAt');
         const lastActiveAt = lastActiveAtStr ? Number(lastActiveAtStr) : NaN;
         if (Number.isFinite(lastActiveAt) && lastActiveAt > Date.now() - idleThresholdMs) {
@@ -1274,7 +1316,7 @@ export class RoomService {
         if (deleted.count === 0) return;
 
         await this.redis.del(`room:${room.code}`);
-        await this.redis.del(`avalon:${room.code}:state`);
+        await this.redis.delWithLock(lease, `avalon:${room.code}:state`);
         for (const player of players) {
           await this.redis.del(`room:${room.code}:offline:${player.userId}`);
         }
