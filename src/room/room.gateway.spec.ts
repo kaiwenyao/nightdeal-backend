@@ -81,6 +81,7 @@ describe('RoomGateway', () => {
       joinRoom: jest.fn(),
       leaveRoom: jest.fn(),
       isPlayerOffline: jest.fn(),
+      cleanupOfflinePlayer: jest.fn(),
       markPlayerOnline: jest.fn(),
       markPlayerOffline: jest.fn(),
       updateRoomSettings: jest.fn(),
@@ -473,6 +474,34 @@ describe('RoomGateway', () => {
       expect(mockServer.in).toHaveBeenCalledWith('user:user-2');
       expect(roomService.markPlayerOffline).toHaveBeenCalledWith('ABCDEF', 'user-2');
       expect(mockServer.emit).toHaveBeenCalledWith('room:offline', { userId: 'user-2' });
+    });
+
+    it('does not remove a player who reconnects before the cleanup timer fires', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      roomService.cleanupOfflinePlayer.mockResolvedValue('skipped');
+
+      await gateway.handleDisconnect(mockClient);
+      await jest.runAllTimersAsync();
+
+      expect(roomService.cleanupOfflinePlayer).toHaveBeenCalledWith('ABCDEF', 'user-2');
+      expect(mockServer.emit).not.toHaveBeenCalledWith('room:player-left', expect.anything());
+    });
+
+    it('does not emit player-left when the room starts before timed cleanup', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      roomService.cleanupOfflinePlayer.mockResolvedValue('offline');
+
+      await gateway.handleDisconnect(mockClient);
+      await jest.runAllTimersAsync();
+
+      expect(mockServer.emit).toHaveBeenCalledWith('room:offline', { userId: 'user-2' });
+      expect(mockServer.emit).not.toHaveBeenCalledWith('room:player-left', expect.anything());
     });
 
     it('does nothing while the user still has live connections on any instance', async () => {

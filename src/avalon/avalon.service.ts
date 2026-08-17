@@ -146,6 +146,7 @@ export class AvalonService {
     players: { seatNo: number; userId: string; name: string; isHost: boolean }[],
     config: AvalonGameConfig,
     precomputedAssignments?: { userId: string; role: AvalonRole }[],
+    generationId = 'legacy',
   ): Promise<Map<PlayerId, { role: AvalonRole; faction: Faction }>> {
     return this.withRoomLock(roomCode, async () => {
       let assignments: { seatNo: number; userId: string; role: AvalonRole; faction: Faction }[];
@@ -201,7 +202,10 @@ export class AvalonService {
       });
 
       // 创建初始状态
-      const state = createInitialState(roomCode, avalonPlayers, config);
+      const state = {
+        ...createInitialState(roomCode, avalonPlayers, config),
+        generationId,
+      };
 
       // 找到刺客和梅林
       const assassin = avalonPlayers.find(p => p.role === 'Assassin');

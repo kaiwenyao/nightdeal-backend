@@ -105,6 +105,12 @@ describe('AvalonService', () => {
       expect(await service.getGameState('ABC123')).toBeNull();
     });
 
+    it('stores the database game generation in Redis state', async () => {
+      await service.initializeGame('ABC123', basePlayers, baseConfig, undefined, 'game-42');
+
+      expect((await service.getGameState('ABC123'))?.generationId).toBe('game-42');
+    });
+
     it('uses precomputed assignments instead of generating new ones', async () => {
       const precomputed = basePlayers.map((p, i) => ({
         userId: p.userId,

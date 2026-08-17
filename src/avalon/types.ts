@@ -145,6 +145,8 @@ export interface GameResult {
 /** 阿瓦隆游戏状态 */
 export interface AvalonGameState {
   roomId: string;
+  /** DB GameRecord id used to fence stale lifecycle owners. */
+  generationId?: string;
   phase: GamePhase;
   players: AvalonPlayer[];
   config: AvalonGameConfig;

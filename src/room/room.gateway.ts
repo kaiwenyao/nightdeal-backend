@@ -454,24 +454,14 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         const timeout = setTimeout(async () => {
           try {
             this.clearOfflineTimeout(userId, roomCode);
-            // Re-check: if the player reconnected and the offline marker was
-            // cleared by handleJoin(), skip cleanup to avoid a race condition.
-            const stillOffline = await this.roomService.isPlayerOffline(roomCode, userId);
-            if (!stillOffline) {
-              return;
+            // Reconnect and cleanup share one room-wide presence lock, so the
+            // marker check and destructive leave are one atomic decision.
+            const outcome = await this.roomService.cleanupOfflinePlayer(roomCode, userId);
+            if (outcome === 'removed') {
+              await this.notifyClientsAfterLeave(roomCode, userId, { evict: false });
+            } else if (outcome === 'offline') {
+              await this.notifyClientsAfterOffline(roomCode, userId, false);
             }
-            const room = await this.roomService.getRoom(roomCode);
-            if (room && room.status === 'PLAYING') {
-              return;
-            }
-            // Re-check once more before the destructive leaveRoom():
-            // the player may have reconnected while getRoom() was awaited.
-            const stillOfflineBeforeLeave = await this.roomService.isPlayerOffline(roomCode, userId);
-            if (!stillOfflineBeforeLeave) {
-              return;
-            }
-            await this.roomService.leaveRoom(roomCode, userId);
-            await this.notifyClientsAfterLeave(roomCode, userId, { evict: false });
           } catch (error) {
             this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
           }

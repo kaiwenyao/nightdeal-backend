@@ -127,6 +127,26 @@ export class RedisService implements OnModuleDestroy {
     if (Number(deleted) < 0) throw new Error('LOCK_LOST');
   }
 
+  /** Delete JSON state only when both lease ownership and generation match. */
+  async delJsonFieldWithLock(
+    lease: RedisLockLease,
+    key: string,
+    field: string,
+    expected: string,
+  ): Promise<boolean> {
+    const deleted = await this.client.eval(
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return -1 end\nlocal value = redis.call('get', KEYS[2])\nif not value then return 0 end\nlocal ok, decoded = pcall(cjson.decode, value)\nif not ok or tostring(decoded[ARGV[2]]) ~= ARGV[3] then return 0 end\nreturn redis.call('del', KEYS[2])",
+      2,
+      lease.key,
+      key,
+      lease.token,
+      field,
+      expected,
+    );
+    if (Number(deleted) < 0) throw new Error('LOCK_LOST');
+    return Number(deleted) === 1;
+  }
+
   async del(key: string): Promise<void> {
     await this.client.del(key);
   }
