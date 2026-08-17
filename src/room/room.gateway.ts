@@ -260,6 +260,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     await this.broadcastRoomState(roomCode);
   }
 
+  async notifyClientsAfterOffline(roomCode: string, userId: string, evict = true): Promise<void> {
+    if (evict) this.evictUserFromRoom(userId, roomCode);
+    this.server.to(roomCode).emit('room:offline', { userId });
+    await this.broadcastRoomState(roomCode);
+  }
+
   /** After a leave/cleanup removal: optionally evict sockets, then player-left + full room state. */
   async notifyClientsAfterLeave(
     roomCode: string,
@@ -296,7 +302,15 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       return;
     }
 
-    await this.roomService.leaveRoom(payload.roomCode, userId);
+    const outcome = await this.roomService.leaveRoom(payload.roomCode, userId);
+    if (outcome === 'offline') {
+      await this.notifyClientsAfterOffline(payload.roomCode, userId);
+      return;
+    }
+    if (outcome === 'not_found') {
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '你不在该房间中' });
+      return;
+    }
 
     await this.notifyClientsAfterLeave(payload.roomCode, userId);
   }
@@ -435,9 +449,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
       for (const roomCode of rooms) {
         await this.roomService.markPlayerOffline(roomCode, userId);
-        this.server.to(roomCode).emit('room:offline', { userId });
-        // Propagate a possible in-game host transfer triggered by markPlayerOffline.
-        await this.broadcastRoomState(roomCode);
+        await this.notifyClientsAfterOffline(roomCode, userId, false);
 
         const timeout = setTimeout(async () => {
           try {

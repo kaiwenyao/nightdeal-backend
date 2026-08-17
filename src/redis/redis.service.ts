@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 
+export interface RedisLockLease {
+  key: string;
+  token: string;
+}
+
 @Injectable()
 export class RedisService implements OnModuleDestroy {
   private readonly client: Redis;
@@ -51,7 +56,7 @@ export class RedisService implements OnModuleDestroy {
    * Run one short cross-instance critical section under a token-owned Redis lock.
    * The Lua release prevents an expired lock owner from deleting a newer owner's lock.
    */
-  async withLock<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  async withLock<T>(key: string, ttlMs: number, fn: (lease: RedisLockLease) => Promise<T>): Promise<T> {
     const token = randomUUID();
     let acquired: 'OK' | null = null;
     for (let attempt = 0; attempt < 40 && acquired !== 'OK'; attempt++) {
@@ -74,7 +79,7 @@ export class RedisService implements OnModuleDestroy {
     renewTimer.unref();
 
     try {
-      return await fn();
+      return await fn({ key, token });
     } finally {
       clearInterval(renewTimer);
       try {
@@ -90,6 +95,25 @@ export class RedisService implements OnModuleDestroy {
         this.logger.error(`Failed to release lock ${key}: ${error}`);
       }
     }
+  }
+
+  /** Atomically write a value only while the caller still owns its lease. */
+  async setWithLock(
+    lease: RedisLockLease,
+    key: string,
+    value: string,
+    expirySeconds: number,
+  ): Promise<void> {
+    const written = await this.client.eval(
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end\nredis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3])\nreturn 1",
+      2,
+      lease.key,
+      key,
+      lease.token,
+      value,
+      expirySeconds,
+    );
+    if (Number(written) !== 1) throw new Error('LOCK_LOST');
   }
 
   async del(key: string): Promise<void> {

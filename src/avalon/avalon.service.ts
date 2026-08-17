@@ -4,7 +4,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import { RedisService } from '../redis/redis.service';
+import { RedisLockLease, RedisService } from '../redis/redis.service';
 import {
   PlayerId,
   AvalonRole,
@@ -47,6 +47,7 @@ export class AvalonService {
   // 后到的 resolve 因引擎阶段校验失败而安全落空，不会双重计分。
   // 进程内锁，当前按单实例部署；多实例需要换成 Redis SET NX EX。
   private roomChains = new Map<string, Promise<unknown>>();
+  private roomLeases = new Map<string, RedisLockLease>();
 
   constructor(private redis: RedisService) {}
 
@@ -55,7 +56,14 @@ export class AvalonService {
    */
   private withRoomLock<T>(roomCode: string, fn: () => Promise<T>): Promise<T> {
     const chained = (this.roomChains.get(roomCode) ?? Promise.resolve()).then(() =>
-      this.redis.withLock(`lock:avalon:${roomCode}:state`, 30_000, fn),
+      this.redis.withLock(`lock:avalon:${roomCode}:state`, 30_000, async (lease) => {
+        this.roomLeases.set(roomCode, lease);
+        try {
+          return await fn();
+        } finally {
+          this.roomLeases.delete(roomCode);
+        }
+      }),
     );
     const tracked = chained.catch(() => undefined);
     this.roomChains.set(roomCode, tracked);
@@ -82,7 +90,10 @@ export class AvalonService {
    * 保存游戏状态
    */
   async saveGameState(roomCode: string, state: AvalonGameState): Promise<void> {
-    await this.redis.set(
+    const lease = this.roomLeases.get(roomCode);
+    if (!lease) throw new Error('Avalon state write attempted without room lock');
+    await this.redis.setWithLock(
+      lease,
       `avalon:${roomCode}:state`,
       JSON.stringify(state),
       GAME_STATE_TTL,
@@ -215,6 +226,20 @@ export class AvalonService {
 
       this.logger.log(`Game initialized for room ${roomCode}: ${players.length} players`);
       return roleAssignments;
+    });
+  }
+
+  async updateHost(roomCode: string, hostId: PlayerId): Promise<void> {
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return;
+      if (!state.players.some((player) => player.id === hostId)) {
+        throw new Error('新房主不在本局游戏中');
+      }
+      await this.saveGameState(roomCode, {
+        ...state,
+        players: state.players.map((player) => ({ ...player, isHost: player.id === hostId })),
+      });
     });
   }
 

@@ -74,6 +74,8 @@ describe('RoomController', () => {
       notifyClientsAfterEnd: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterSettingsUpdate: jest.fn().mockResolvedValue(undefined),
       notifyClientsAfterJoin: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterLeave: jest.fn().mockResolvedValue(undefined),
+      notifyClientsAfterOffline: jest.fn().mockResolvedValue(undefined),
       server: {
         to: jest.fn().mockReturnThis(),
         emit: jest.fn(),
@@ -261,14 +263,24 @@ describe('RoomController', () => {
     it('leaves the room and broadcasts refreshed room state', async () => {
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
-      roomService.getPlayerCount.mockResolvedValue(1);
+      roomService.leaveRoom.mockResolvedValue('removed');
 
       const result = await controller.leaveRoom(mockReq, 'abcdef');
 
       expect(roomService.leaveRoom).toHaveBeenCalledWith('ABCDEF', 'user-1');
-      expect(roomGateway.evictUserFromRoom).toHaveBeenCalledWith('user-1', 'ABCDEF');
-      expect(roomGateway.broadcastRoomState).toHaveBeenCalledWith('ABCDEF');
+      expect(roomGateway.notifyClientsAfterLeave).toHaveBeenCalledWith('ABCDEF', 'user-1');
       expect(result).toEqual({ success: true });
+    });
+
+    it('reports PLAYING leave as offline without a player-left notification', async () => {
+      roomService.getRoom.mockResolvedValue({ ...mockRoom, status: 'PLAYING' });
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.leaveRoom.mockResolvedValue('offline');
+
+      await controller.leaveRoom(mockReq, 'abcdef');
+
+      expect(roomGateway.notifyClientsAfterOffline).toHaveBeenCalledWith('ABCDEF', 'user-1');
+      expect(roomGateway.notifyClientsAfterLeave).not.toHaveBeenCalled();
     });
 
     it('room not found → 404 NotFoundException', async () => {

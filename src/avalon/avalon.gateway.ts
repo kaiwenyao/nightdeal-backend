@@ -15,7 +15,7 @@ import {
 import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters, OnModuleInit } from '@nestjs/common';
 import { Namespace, Socket } from 'socket.io';
 import { AvalonService } from './avalon.service';
-import { RoomService } from '../room/room.service';
+import { RoomInfo, RoomService } from '../room/room.service';
 import { AuthService } from '../auth/auth.service';
 import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
@@ -147,22 +147,22 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     }
   }
 
-  private async requireActiveMember(client: Socket, roomCode: string, userId: string): Promise<boolean> {
+  private async requireActiveMember(client: Socket, roomCode: string, userId: string): Promise<RoomInfo | null> {
     const room = await this.roomService.getRoom(roomCode);
     if (!room || room.gameType !== 'AVALON') {
       client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '房间不存在' });
-      return false;
+      return null;
     }
     if (room.status !== 'PLAYING') {
       client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '游戏尚未开始' });
-      return false;
+      return null;
     }
     const player = await this.roomService.getPlayer(roomCode, userId);
     if (!player) {
       client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-      return false;
+      return null;
     }
-    return true;
+    return room;
   }
 
   // ==================== 房间加入/离开 ====================
@@ -261,7 +261,15 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const userId = client.data.userId;
 
     try {
-      if (!(await this.requireActiveMember(client, payload.roomCode, userId))) return;
+      const room = await this.requireActiveMember(client, payload.roomCode, userId);
+      if (!room) return;
+      if (room.hostId !== userId) {
+        client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '仅房主可以开始任务阶段' });
+        return;
+      }
+      // PostgreSQL is authoritative for host transfer. Refresh the cached game
+      // flag before the engine performs its phase/host validation.
+      await this.avalonService.updateHost(payload.roomCode, userId);
 
       const result = await this.avalonService.beginGame(payload.roomCode, userId);
       if ('error' in result) {

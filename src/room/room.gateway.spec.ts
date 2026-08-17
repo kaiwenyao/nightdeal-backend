@@ -226,6 +226,16 @@ describe('RoomGateway', () => {
       });
     });
 
+    it('emits offline rather than player-left when a PLAYING leave retains the player', async () => {
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.leaveRoom.mockResolvedValue('offline');
+
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockServer.emit).toHaveBeenCalledWith('room:offline', { userId: 'user-2' });
+      expect(mockServer.emit).not.toHaveBeenCalledWith('room:player-left', expect.anything());
+    });
+
     it('rejects leave from a non-member without touching the room', async () => {
       roomService.getPlayer.mockResolvedValue(null);
 

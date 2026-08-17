@@ -19,6 +19,7 @@ describe('AvalonGateway', () => {
     getPlayerView: jest.fn(),
     getAllPlayerViews: jest.fn(),
     beginGame: jest.fn(),
+    updateHost: jest.fn(),
     markPlayerOnline: jest.fn(),
     markPlayerOffline: jest.fn(),
   };
@@ -84,7 +85,7 @@ describe('AvalonGateway', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRedis.incrWithExpireIfFirst.mockResolvedValue(1);
-    mockRoomService.getRoom.mockResolvedValue({ gameType: 'AVALON', status: 'PLAYING' });
+    mockRoomService.getRoom.mockResolvedValue({ gameType: 'AVALON', status: 'PLAYING', hostId: 'u1' });
     gateway = new AvalonGateway(
       mockAvalonService as unknown as AvalonService,
       mockRoomService as unknown as RoomService,
@@ -199,6 +200,19 @@ describe('AvalonGateway', () => {
         phase: 'team_building',
         round: 1,
       });
+    });
+
+    it('uses the current database host and synchronizes cached host state', async () => {
+      mockRoomService.getRoom.mockResolvedValue({ gameType: 'AVALON', status: 'PLAYING', hostId: 'u2' });
+      mockRoomService.getPlayer.mockResolvedValue({ userId: 'u2' });
+      mockAvalonService.beginGame.mockResolvedValue({ success: true, phase: 'team_building', round: 1 });
+      mockAvalonService.getAllPlayerViews.mockResolvedValue(new Map());
+      const client = buildClient('u2');
+
+      await gateway.handleBegin(client as never, { roomCode: 'ABC123' });
+
+      expect(mockAvalonService.updateHost).toHaveBeenCalledWith('ABC123', 'u2');
+      expect(mockAvalonService.beginGame).toHaveBeenCalledWith('ABC123', 'u2');
     });
 
     it('emits avalon:error when service rejects (e.g. non-host or wrong phase)', async () => {

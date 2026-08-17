@@ -83,17 +83,16 @@ export class RoomController {
     if (!player) {
       throw new BadRequestException('你不在该房间中');
     }
-    await this.roomService.leaveRoom(code, req.user.id);
-    this.roomGateway.evictUserFromRoom(req.user.id, code);
+    const outcome = await this.roomService.leaveRoom(code, req.user.id);
+    if (outcome === 'offline') {
+      await this.roomGateway.notifyClientsAfterOffline(code, req.user.id);
+      return { success: true };
+    }
+    if (outcome === 'not_found') {
+      throw new BadRequestException('你不在该房间中');
+    }
 
-    // Emit player-left event to all remaining clients in the room (consistent with WebSocket leave)
-    const playerCount = await this.roomService.getPlayerCount(code);
-    this.roomGateway.server.to(code).emit('room:player-left', {
-      userId: req.user.id,
-      playerCount,
-    });
-
-    await this.roomGateway.broadcastRoomState(code);
+    await this.roomGateway.notifyClientsAfterLeave(code, req.user.id);
     return { success: true };
   }
 
