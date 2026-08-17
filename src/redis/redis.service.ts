@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -43,6 +44,51 @@ export class RedisService implements OnModuleDestroy {
       await this.client.set(key, value, 'EX', expirySeconds);
     } else {
       await this.client.set(key, value);
+    }
+  }
+
+  /**
+   * Run one short cross-instance critical section under a token-owned Redis lock.
+   * The Lua release prevents an expired lock owner from deleting a newer owner's lock.
+   */
+  async withLock<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+    const token = randomUUID();
+    let acquired: 'OK' | null = null;
+    for (let attempt = 0; attempt < 40 && acquired !== 'OK'; attempt++) {
+      acquired = await this.client.set(key, token, 'PX', ttlMs, 'NX');
+      if (acquired !== 'OK') {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (acquired !== 'OK') throw new Error('LOCK_BUSY');
+
+    const renewTimer = setInterval(() => {
+      void this.client.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
+        1,
+        key,
+        token,
+        ttlMs,
+      ).catch((error) => this.logger.error(`Failed to renew lock ${key}: ${error}`));
+    }, Math.max(1000, Math.floor(ttlMs / 3)));
+    renewTimer.unref();
+
+    try {
+      return await fn();
+    } finally {
+      clearInterval(renewTimer);
+      try {
+        await this.client.eval(
+          "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+          1,
+          key,
+          token,
+        );
+      } catch (error) {
+        // Never mask the lifecycle operation's authoritative result. The lock
+        // has a TTL and will self-release if Redis is temporarily unavailable.
+        this.logger.error(`Failed to release lock ${key}: ${error}`);
+      }
     }
   }
 

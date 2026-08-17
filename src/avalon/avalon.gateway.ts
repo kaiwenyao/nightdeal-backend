@@ -134,6 +134,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   /** 退出 avalon 房间订阅；若该用户没有其他 socket 仍在房间内，则标记离线并广播。 */
   private async detachFromAvalonRoom(client: Socket, roomCode: string, userId: string): Promise<void> {
     client.leave(`avalon:${roomCode}`);
+    client.leave(`avalon:${roomCode}:user:${userId}`);
     try {
       const remaining = await this.server.in(`avalon:${roomCode}`).fetchSockets();
       if (remaining.some(s => s.id !== client.id && s.data?.userId === userId)) {
@@ -144,6 +145,24 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     } catch (error) {
       this.logger.error(`Error detaching user ${userId} from avalon room ${roomCode}:`, error);
     }
+  }
+
+  private async requireActiveMember(client: Socket, roomCode: string, userId: string): Promise<boolean> {
+    const room = await this.roomService.getRoom(roomCode);
+    if (!room || room.gameType !== 'AVALON') {
+      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '房间不存在' });
+      return false;
+    }
+    if (room.status !== 'PLAYING') {
+      client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '游戏尚未开始' });
+      return false;
+    }
+    const player = await this.roomService.getPlayer(roomCode, userId);
+    if (!player) {
+      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
+      return false;
+    }
+    return true;
   }
 
   // ==================== 房间加入/离开 ====================
@@ -164,12 +183,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const userId = client.data.userId;
 
     try {
-      // 验证玩家是否在房间中
-      const player = await this.roomService.getPlayer(payload.roomCode, userId);
-      if (!player) {
-        client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-        return;
-      }
+      if (!(await this.requireActiveMember(client, payload.roomCode, userId))) return;
 
       // 验证玩家是否在本局游戏状态中（否则 getPlayerView 会抛异常）
       const state = await this.avalonService.getGameState(payload.roomCode);
@@ -191,6 +205,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       }
       client.data.avalonRooms = [payload.roomCode];
       client.join(`avalon:${payload.roomCode}`);
+      client.join(`avalon:${payload.roomCode}:user:${userId}`);
 
       // 标记上线并广播，让其他玩家看到 isConnected 恢复
       await this.avalonService.markPlayerOnline(payload.roomCode, userId);
@@ -246,11 +261,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const userId = client.data.userId;
 
     try {
-      const player = await this.roomService.getPlayer(payload.roomCode, userId);
-      if (!player) {
-        client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-        return;
-      }
+      if (!(await this.requireActiveMember(client, payload.roomCode, userId))) return;
 
       const result = await this.avalonService.beginGame(payload.roomCode, userId);
       if ('error' in result) {
@@ -295,12 +306,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     const userId = client.data.userId;
 
-    // 验证玩家是否在房间中
-    const player = await this.roomService.getPlayer(payload.roomCode, userId);
-    if (!player) {
-      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-      return;
-    }
+    if (!(await this.requireActiveMember(client, payload.roomCode, userId))) return;
 
     const result = await this.avalonService.proposeTeam(
       payload.roomCode,
@@ -338,12 +344,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     const userId = client.data.userId;
 
-    // 验证玩家是否在房间中
-    const player = await this.roomService.getPlayer(payload.roomCode, userId);
-    if (!player) {
-      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-      return;
-    }
+    if (!(await this.requireActiveMember(client, payload.roomCode, userId))) return;
 
     const result = await this.avalonService.submitTeamVote(
       payload.roomCode,
@@ -424,12 +425,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     const userId = client.data.userId;
 
-    // 验证玩家是否在房间中
-    const player = await this.roomService.getPlayer(payload.roomCode, userId);
-    if (!player) {
-      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-      return;
-    }
+    if (!(await this.requireActiveMember(client, payload.roomCode, userId))) return;
 
     const result = await this.avalonService.submitQuestAction(
       payload.roomCode,
@@ -502,12 +498,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     const userId = client.data.userId;
 
-    // 验证玩家是否在房间中
-    const player = await this.roomService.getPlayer(payload.roomCode, userId);
-    if (!player) {
-      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-      return;
-    }
+    if (!(await this.requireActiveMember(client, payload.roomCode, userId))) return;
 
     const result = await this.avalonService.assassinate(
       payload.roomCode,
@@ -543,7 +534,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const views = await this.avalonService.getAllPlayerViews(roomCode);
 
     for (const [playerId, view] of views) {
-      this.server.to('user:' + playerId).emit('avalon:state', view);
+      this.server.to(`avalon:${roomCode}:user:${playerId}`).emit('avalon:state', view);
     }
   }
 

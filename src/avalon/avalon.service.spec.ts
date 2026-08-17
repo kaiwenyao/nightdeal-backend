@@ -30,6 +30,7 @@ describe('AvalonService', () => {
     hset: jest.fn().mockResolvedValue(undefined),
     hsetWithExpire: jest.fn().mockResolvedValue(undefined),
     hget: jest.fn().mockResolvedValue(null),
+    withLock: jest.fn().mockImplementation(async (_key: string, _ttl: number, fn: () => Promise<unknown>) => fn()),
   };
 
   const basePlayers = [
@@ -228,6 +229,19 @@ describe('AvalonService', () => {
       expect(successes).toHaveLength(1);
       expect(errors).toHaveLength(1);
       expect((errors[0] as { error: string }).error).toBe('当前不是投票阶段');
+    });
+  });
+
+  describe('activity tracking failures', () => {
+    it('does not reject a committed state transition when the activity touch fails', async () => {
+      await initGame();
+      mockRedis.hsetWithExpire.mockRejectedValueOnce(new Error('activity redis failure'));
+
+      await expect(service.beginGame('ABC123', 'u1')).resolves.toMatchObject({
+        success: true,
+        phase: 'team_building',
+      });
+      expect((await service.getGameState('ABC123'))?.phase).toBe('team_building');
     });
   });
 

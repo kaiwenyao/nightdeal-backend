@@ -16,6 +16,7 @@ describe('RoomService', () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findMany: jest.fn(),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
     roomPlayer: {
       create: jest.fn(),
@@ -44,6 +45,7 @@ describe('RoomService', () => {
     set: jest.fn().mockResolvedValue(undefined),
     del: jest.fn().mockResolvedValue(undefined),
     expire: jest.fn().mockResolvedValue(undefined),
+    withLock: jest.fn().mockImplementation(async (_key: string, _ttl: number, fn: () => Promise<unknown>) => fn()),
   };
 
   beforeEach(async () => {
@@ -799,6 +801,16 @@ describe('RoomService', () => {
 
       expect(result).toEqual({ error: '该玩家不在房间中' });
     });
+
+    it('does not delete when the room starts between the snapshot and transaction', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.room.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const result = await service.kickPlayer('ABCDEF', 'host-1', 'u2');
+
+      expect(result).toEqual({ error: '游戏已开始或房主已变更' });
+      expect(mockPrisma.roomPlayer.deleteMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('joinRoom transaction safety', () => {
@@ -1022,13 +1034,34 @@ describe('RoomService', () => {
       mockPrisma.roomPlayer.findMany.mockResolvedValue([
         { id: 'p-1', roomId: 'room-1', userId: 'u-1', seatNo: 1, role: null, joinedAt: new Date(), user: { id: 'u-1', nickName: 'a', avatarUrl: '' } },
       ]);
-      mockRedis.get.mockResolvedValue('1'); // everyone offline
+      mockRedis.get.mockResolvedValue('1'); // everyone offline long past the grace period
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue(null); // removed after leaveRoom
       const notifier = { notifyClientsAfterLeave: jest.fn().mockResolvedValue(undefined) };
       service.setEventsNotifier(notifier);
 
       await service.cleanupOfflinePlayers();
 
       expect(notifier.notifyClientsAfterLeave).toHaveBeenCalledWith('ABCDEF', 'u-1');
+    });
+
+    it('keeps recently disconnected players for the full grace period', async () => {
+      mockPrisma.room.findMany.mockResolvedValue([{ code: 'ABCDEF' }]);
+      mockPrisma.room.findUnique.mockResolvedValue({
+        id: 'room-1', code: 'ABCDEF', hostId: 'host-1', status: 'WAITING',
+        gameType: GameType.AVALON, roleConfig: {}, maxPlayers: 5,
+        createdAt: new Date(), updatedAt: new Date(),
+      });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([
+        { id: 'p-1', roomId: 'room-1', userId: 'u-1', seatNo: 1, role: null, joinedAt: new Date(), user: { id: 'u-1', nickName: 'a', avatarUrl: '' } },
+      ]);
+      mockRedis.get.mockResolvedValue(Date.now().toString());
+      const notifier = { notifyClientsAfterLeave: jest.fn() };
+      service.setEventsNotifier(notifier as never);
+
+      await service.cleanupOfflinePlayers();
+
+      expect(mockPrisma.roomPlayer.deleteMany).not.toHaveBeenCalled();
+      expect(notifier.notifyClientsAfterLeave).not.toHaveBeenCalled();
     });
   });
 });

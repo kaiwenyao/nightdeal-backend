@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
@@ -31,12 +31,18 @@ export class HealthController {
     }
 
     try {
-      await this.redis.ping();
+      if (!(await this.redis.ping())) {
+        checks.services.redis = 'error';
+        checks.status = 'error';
+      }
     } catch (error) {
       checks.services.redis = 'error';
       checks.status = 'error';
     }
 
+    if (checks.status === 'error') {
+      throw new ServiceUnavailableException(checks);
+    }
     return checks;
   }
 }

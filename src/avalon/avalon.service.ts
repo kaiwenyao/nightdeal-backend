@@ -54,7 +54,9 @@ export class AvalonService {
    * 串行执行同一房间的写操作（进程内）。链结束后删掉 Map 条目，避免房间码常驻。
    */
   private withRoomLock<T>(roomCode: string, fn: () => Promise<T>): Promise<T> {
-    const chained = (this.roomChains.get(roomCode) ?? Promise.resolve()).then(fn);
+    const chained = (this.roomChains.get(roomCode) ?? Promise.resolve()).then(() =>
+      this.redis.withLock(`lock:avalon:${roomCode}:state`, 30_000, fn),
+    );
     const tracked = chained.catch(() => undefined);
     this.roomChains.set(roomCode, tracked);
     void tracked.finally(() => {
@@ -92,12 +94,18 @@ export class AvalonService {
     // while players are mid-game and be cascade-deleted along with its state.
     // Renew the TTL as well: a bare hset on an already-expired key recreates it
     // with no expiry at all, leaking the hash until the room is deleted.
-    await this.redis.hsetWithExpire(
-      `room:${roomCode}`,
-      'lastActiveAt',
-      Date.now().toString(),
-      ROOM_HASH_TTL_SECONDS,
-    );
+    try {
+      await this.redis.hsetWithExpire(
+        `room:${roomCode}`,
+        'lastActiveAt',
+        Date.now().toString(),
+        ROOM_HASH_TTL_SECONDS,
+      );
+    } catch (error) {
+      // The game-state SET above is authoritative. A secondary activity touch
+      // must not turn a committed vote/action into a client-visible failure.
+      this.logger.warn(`Failed to touch room activity for ${roomCode}: ${error}`);
+    }
   }
 
   /**

@@ -9,8 +9,8 @@ import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 import { WsErrorCode } from '../common/constants/ws-error-codes';
 import { RedisService } from '../redis/redis.service';
 import { wsCorsOrigin } from '../common/cors-origin';
+import { PLAYER_OFFLINE_GRACE_MS } from './room.constants';
 
-const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 const WS_RATE_LIMIT_WINDOW_MS = 1000;
 const WS_RATE_LIMIT_MAX = 10;
 
@@ -463,7 +463,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
           } catch (error) {
             this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
           }
-        }, OFFLINE_TIMEOUT_MS);
+        }, PLAYER_OFFLINE_GRACE_MS);
 
         this.setOfflineTimeout(userId, roomCode, timeout);
       }
