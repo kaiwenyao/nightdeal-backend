@@ -423,6 +423,25 @@ describe('RoomGateway', () => {
       });
       expect(mockServer.emit).not.toHaveBeenCalledWith('room:state', expect.anything());
     });
+
+    it('still delivers roles when the room:state broadcast throws', async () => {
+      const mockAssignments = [
+        { seatNo: 1, userId: 'user-2', role: '梅林', team: 'good' as const },
+      ];
+      roomService.startGame.mockResolvedValue({
+        assignments: mockAssignments,
+        gameType: GameType.AVALON,
+      });
+      roomService.getRoom.mockRejectedValue(new Error('db timeout'));
+
+      await gateway.handleStart(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockServer.to).toHaveBeenCalledWith('user:user-2');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:started', {
+        yourRole: '梅林',
+        gameType: 'AVALON',
+      });
+    });
   });
 
   describe('handleDisconnect', () => {
