@@ -8,13 +8,14 @@ import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 import { WsErrorCode } from '../common/constants/ws-error-codes';
 import { RedisService } from '../redis/redis.service';
+import { wsCorsOrigin } from '../common/cors-origin';
 
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 const WS_RATE_LIMIT_WINDOW_MS = 1000;
 const WS_RATE_LIMIT_MAX = 10;
 
 @WebSocketGateway({
-  cors: { origin: process.env.CORS_ORIGIN || false },
+  cors: { origin: wsCorsOrigin() },
   namespace: '/room',
   allowEIO3: true,
 })

@@ -31,12 +31,13 @@ import {
 } from './dto';
 import { AvalonGameState, PlayerView, TeamVote, QuestAction, PlayerId } from './types';
 import { getPlayerView } from './visibility';
+import { wsCorsOrigin } from '../common/cors-origin';
 
 const WS_RATE_LIMIT_WINDOW_MS = 1000;
 const WS_RATE_LIMIT_MAX = 10;
 
 @WebSocketGateway({
-  cors: { origin: process.env.CORS_ORIGIN || false },
+  cors: { origin: wsCorsOrigin() },
   namespace: '/avalon',
   allowEIO3: true,
 })
@@ -257,11 +258,20 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         return;
       }
 
-      await this.broadcastGameState(payload.roomCode);
-      this.server.to(`avalon:${payload.roomCode}`).emit('avalon:phase-changed', {
-        phase: result.phase,
-        round: result.round,
-      });
+      // 广播/通知失败不应让客户端误以为操作失败：beginGame 已经成功推进了阶段，
+      // 这里只是把新状态告诉其他玩家，失败仅记日志。
+      try {
+        await this.broadcastGameState(payload.roomCode);
+        this.server.to(`avalon:${payload.roomCode}`).emit('avalon:phase-changed', {
+          phase: result.phase,
+          round: result.round,
+        });
+      } catch (error) {
+        this.logger.error(
+          `Failed to broadcast phase-changed after begin for room ${payload.roomCode}:`,
+          error,
+        );
+      }
     } catch (error) {
       this.logger.error(`Error handling avalon:begin for user ${userId} room ${payload.roomCode}:`, error);
       client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '操作失败，请重试' });

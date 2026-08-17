@@ -344,8 +344,19 @@ export class RoomService {
 
       // Must use the transaction client — using this.prisma here would commit
       // the roomPlayer row outside the transaction.
-      const playerRecord = await assignSeat(tx, room.id, userId, room.maxPlayers);
-      return { playerRecord };
+      try {
+        const playerRecord = await assignSeat(tx, room.id, userId, room.maxPlayers);
+        return { playerRecord };
+      } catch (e) {
+        // assignSeat throws HTTP-specific BadRequestException on room-full /
+        // already-in-room seat races. On the WebSocket path these would fall to
+        // the generic "服务器内部错误" branch of WsExceptionFilter, so convert them
+        // to the established { error } shape for a consistent user-facing message.
+        if (e instanceof BadRequestException) {
+          return { error: e.message };
+        }
+        throw e;
+      }
     });
 
     if ('error' in result && result.error) return { error: result.error };
