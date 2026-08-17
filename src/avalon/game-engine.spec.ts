@@ -10,6 +10,7 @@ import {
   getRequiredFailCount,
   getQuestConfig,
   createInitialState,
+  beginGame,
   proposeTeam,
   submitTeamVote,
   resolveTeamVote,
@@ -57,6 +58,25 @@ describe('Game Engine', () => {
 
       expect(roles).toHaveLength(6);
       expect(roles.filter(r => r === 'LoyalServant')).toHaveLength(2);
+    });
+
+    it('should reject config without Merlin', () => {
+      const config: AvalonGameConfig = {
+        ...DEFAULT_AVALON_CONFIG,
+        roles: ['Percival', 'Morgana', 'Assassin'],
+      };
+
+      expect(() => generateRoles(5, config)).toThrow('角色配置必须包含梅林(Merlin)');
+    });
+
+    it('should reject config without Assassin', () => {
+      // 缺刺客时好人 3 胜进入刺杀阶段后无人能操作，游戏永久死局，必须拒绝开局
+      const config: AvalonGameConfig = {
+        ...DEFAULT_AVALON_CONFIG,
+        roles: ['Merlin', 'Percival', 'Morgana'],
+      };
+
+      expect(() => generateRoles(5, config)).toThrow('角色配置必须包含刺客(Assassin)');
     });
 
     it('should generate correct roles for 7 players', () => {
@@ -203,6 +223,40 @@ describe('Game Engine', () => {
   });
 
   // ==================== 游戏状态操作测试 ====================
+
+  describe('beginGame', () => {
+    const players: AvalonPlayer[] = [
+      { id: 'p1', name: 'Player 1', seatNo: 1, isHost: true, isConnected: true, role: 'Merlin', faction: 'good' },
+      { id: 'p2', name: 'Player 2', seatNo: 2, isHost: false, isConnected: true, role: 'Percival', faction: 'good' },
+    ];
+    const baseState: AvalonGameState = {
+      roomId: 'test-room',
+      phase: 'role_reveal',
+      players,
+      config: DEFAULT_AVALON_CONFIG,
+      leaderIndex: 0,
+      round: 1,
+      rejectedTeamVoteCount: 0,
+      proposedTeam: [],
+      teamVotes: {},
+      questActions: {},
+      questHistory: [],
+      goodScore: 0,
+      evilScore: 0,
+    };
+
+    it('advances host from role_reveal to team_building', () => {
+      expect(beginGame(baseState, 'p1').phase).toBe('team_building');
+    });
+
+    it('rejects a non-host', () => {
+      expect(() => beginGame(baseState, 'p2')).toThrow('仅房主可以开始任务阶段');
+    });
+
+    it('rejects when not in role_reveal', () => {
+      expect(() => beginGame({ ...baseState, phase: 'team_building' }, 'p1')).toThrow('当前不是身份揭示阶段');
+    });
+  });
 
   describe('proposeTeam', () => {
     let state: AvalonGameState;
@@ -390,6 +444,20 @@ describe('Game Engine', () => {
       expect(() => resolveTeamVote(state)).toThrow('还有玩家未投票');
     });
 
+    it('should throw error if not in team_voting phase (double-resolve guard)', () => {
+      // 弱网下两名玩家同时触发解析：后到的调用阶段已变化，必须抛错而不是重复计分
+      state.phase = 'quest_action';
+      state.teamVotes = {
+        p1: 'approve',
+        p2: 'approve',
+        p3: 'approve',
+        p4: 'reject',
+        p5: 'reject',
+      };
+
+      expect(() => resolveTeamVote(state)).toThrow('当前不是投票阶段');
+    });
+
     it('should end game after 5 consecutive rejections', () => {
       state.rejectedTeamVoteCount = 4;
       state.teamVotes = {
@@ -550,6 +618,51 @@ describe('Game Engine', () => {
       expect(result.succeeded).toBe(true);
       expect(newState.goodScore).toBe(3);
       expect(newState.phase).toBe('assassination');
+    });
+
+    it('should throw error if not in quest_action phase (double-resolve guard)', () => {
+      state.phase = 'team_building';
+      state.questActions = {
+        p1: 'success',
+        p4: 'success',
+      };
+
+      expect(() => resolveQuest(state)).toThrow('当前不是任务执行阶段');
+    });
+
+    it('should not advance round past 5 when entering assassination on the final round', () => {
+      // 第 5 轮好人 3 胜：终局分支不能 round+1，否则 getPlayerView 构建
+      // currentQuestConfig 时 getQuestTeamSize(n, 6) 抛异常，游戏永久卡死
+      state.round = 5;
+      state.goodScore = 2;
+      state.proposedTeam = ['p1', 'p4', 'p2'];
+      state.questActions = {
+        p1: 'success',
+        p4: 'success',
+        p2: 'success',
+      };
+
+      const { newState } = resolveQuest(state);
+
+      expect(newState.phase).toBe('assassination');
+      expect(newState.round).toBe(5);
+    });
+
+    it('should not advance round past 5 when evil wins on the final round', () => {
+      state.round = 5;
+      state.evilScore = 2;
+      state.proposedTeam = ['p1', 'p4', 'p2'];
+      state.questActions = {
+        p1: 'success',
+        p4: 'fail',
+        p2: 'success',
+      };
+
+      const { newState } = resolveQuest(state);
+
+      expect(newState.phase).toBe('finished');
+      expect(newState.winner).toBe('evil');
+      expect(newState.round).toBe(5);
     });
 
     it('should end game after 3 evil wins', () => {

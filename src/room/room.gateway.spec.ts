@@ -51,8 +51,11 @@ describe('RoomGateway', () => {
   beforeEach(async () => {
     mockServer = {
       to: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       except: jest.fn().mockReturnThis(),
       emit: jest.fn(),
+      fetchSockets: jest.fn().mockResolvedValue([]),
+      socketsLeave: jest.fn(),
       adapter: {
         rooms: new Map([['ABCDEF', new Set(['socket-1', 'socket-2'])]]),
       },
@@ -86,6 +89,7 @@ describe('RoomGateway', () => {
       endGame: jest.fn(),
       getUserRooms: jest.fn(),
       updatePlayerInfo: jest.fn(),
+      setEventsNotifier: jest.fn(),
     };
 
     const mockAuthService = {
@@ -93,8 +97,7 @@ describe('RoomGateway', () => {
     };
 
     const mockRedisService = {
-      incr: jest.fn().mockResolvedValue(1),
-      expire: jest.fn().mockResolvedValue(undefined),
+      incrWithExpireIfFirst: jest.fn().mockResolvedValue(1),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -210,6 +213,7 @@ describe('RoomGateway', () => {
 
   describe('handleLeave', () => {
     it('emits player-left and broadcasts room state', async () => {
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
       roomService.getPlayerCount.mockResolvedValue(1);
 
       await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
@@ -222,17 +226,30 @@ describe('RoomGateway', () => {
       });
     });
 
+    it('rejects leave from a non-member without touching the room', async () => {
+      roomService.getPlayer.mockResolvedValue(null);
+
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '你不在该房间中',
+      });
+      expect(roomService.leaveRoom).not.toHaveBeenCalled();
+      expect(mockServer.emit).not.toHaveBeenCalled();
+    });
+
     it('stores rate limit state in Redis', async () => {
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
       roomService.getPlayerCount.mockResolvedValue(1);
 
       await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
 
-      expect(redisService.incr).toHaveBeenCalledWith('ws-rate:user:user-2');
-      expect(redisService.expire).toHaveBeenCalledWith('ws-rate:user:user-2', 1);
+      expect(redisService.incrWithExpireIfFirst).toHaveBeenCalledWith('ws-rate:user:user-2', 1);
     });
 
     it('rejects socket events when the shared Redis rate limit is exceeded', async () => {
-      redisService.incr.mockResolvedValueOnce(11);
+      redisService.incrWithExpireIfFirst.mockResolvedValueOnce(11);
 
       await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
 
@@ -311,7 +328,7 @@ describe('RoomGateway', () => {
     it('emits settings-updated then room:state', async () => {
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
-      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
+      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(null);
 
       await gateway.notifyClientsAfterSettingsUpdate('ABCDEF', 8, mockRoom.roleConfig, false);
 
@@ -330,7 +347,7 @@ describe('RoomGateway', () => {
       roomService.endGame.mockResolvedValue({ success: true });
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
-      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(undefined);
+      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(null);
 
       await gateway.handleEnd(mockClient, { roomCode: 'ABCDEF' });
 
@@ -363,18 +380,66 @@ describe('RoomGateway', () => {
       roomService.startGame.mockResolvedValue({ assignments: mockAssignments });
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
-      mockServer.sockets.set('socket-1', mockClient);
-      (gateway as any).userSocketMap.set('user-2', new Set(['socket-1']));
 
       await gateway.handleStart(mockClient, { roomCode: 'ABCDEF' });
 
       expect(roomService.startGame).toHaveBeenCalledWith('ABCDEF', 'user-2');
-      expect(mockServer.to).toHaveBeenCalledWith('user:user-2');
-      expect(mockServer.emit).toHaveBeenCalledWith('room:started', { yourRole: '梅林' });
+      // room:state should be emitted BEFORE room:started (correct event ordering)
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
         room: mockRoom,
         players: mockPlayers,
       });
+      expect(mockServer.to).toHaveBeenCalledWith('user:user-2');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:started', {
+        yourRole: '梅林',
+        gameType: 'AVALON',
+      });
+    });
+  });
+
+  describe('handleDisconnect', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('marks the player offline when no connections remain anywhere', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      await gateway.handleDisconnect(mockClient);
+
+      expect(mockServer.in).toHaveBeenCalledWith('user:user-2');
+      expect(roomService.markPlayerOffline).toHaveBeenCalledWith('ABCDEF', 'user-2');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:offline', { userId: 'user-2' });
+    });
+
+    it('does nothing while the user still has live connections on any instance', async () => {
+      mockServer.fetchSockets.mockResolvedValue([{ id: 'socket-9' }] as any);
+
+      await gateway.handleDisconnect(mockClient);
+
+      expect(roomService.getUserRooms).not.toHaveBeenCalled();
+      expect(roomService.markPlayerOffline).not.toHaveBeenCalled();
+    });
+
+    it('swallows and logs errors instead of crashing the process', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockRejectedValue(new Error('db down'));
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await expect(gateway.handleDisconnect(mockClient)).resolves.toBeUndefined();
+
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Error handling disconnect'),
+        expect.any(Error),
+      );
+      loggerSpy.mockRestore();
     });
   });
 });

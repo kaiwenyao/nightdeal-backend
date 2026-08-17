@@ -13,6 +13,7 @@ describe('RoomService', () => {
       create: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findMany: jest.fn(),
       delete: jest.fn(),
     },
@@ -98,9 +99,11 @@ describe('RoomService', () => {
           seatNo: 1,
         },
       });
-      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'status', 'WAITING');
-      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'hostId', 'host-1');
-      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'playerCount', '1');
+      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'lastActiveAt', expect.any(String));
+      expect(mockRedis.hset).not.toHaveBeenCalledWith(expect.anything(), 'status', expect.anything());
+      expect(mockRedis.hset).not.toHaveBeenCalledWith(expect.anything(), 'hostId', expect.anything());
+      expect(mockRedis.hset).not.toHaveBeenCalledWith(expect.anything(), 'playerCount', expect.anything());
+      expect(mockRedis.expire).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 86400);
     });
 
     it('rejects Avalon when maxPlayers below minimum', async () => {
@@ -180,7 +183,6 @@ describe('RoomService', () => {
         .mockResolvedValueOnce(mockRoom)     // getRoom check
         .mockResolvedValueOnce(mockRoom)     // getRoom inside getPlayerCount
         .mockResolvedValueOnce({ ...mockRoom, maxPlayers: 10 }); // getRoom return refreshed
-      mockPrisma.room.update.mockResolvedValue({ ...mockRoom, maxPlayers: 10 });
       mockPrisma.roomPlayer.count.mockResolvedValue(3);
 
       const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
@@ -189,7 +191,21 @@ describe('RoomService', () => {
       });
 
       expect(result).toHaveProperty('maxPlayers', 10);
-      expect(mockPrisma.room.update).toHaveBeenCalled();
+      expect(mockPrisma.room.updateMany).toHaveBeenCalledWith({
+        where: { id: 'room-1', status: 'WAITING' },
+        data: expect.any(Object),
+      });
+    });
+
+    it('returns error when the update races a game start (status flip affected 0 rows)', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.room.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
+        isRandomSeat: true,
+      });
+
+      expect(result).toEqual({ error: '游戏已开始，无法修改设置' });
     });
 
     it('rejects non-host', async () => {
@@ -259,7 +275,6 @@ describe('RoomService', () => {
         .mockResolvedValueOnce(sgsRoom)
         .mockResolvedValueOnce(sgsRoom)
         .mockResolvedValueOnce(updatedSgs);
-      mockPrisma.room.update.mockResolvedValue(updatedSgs);
       mockPrisma.roomPlayer.count.mockResolvedValue(1);
 
       const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
@@ -267,7 +282,7 @@ describe('RoomService', () => {
       });
 
       expect(result).toHaveProperty('maxPlayers', 2);
-      expect(mockPrisma.room.update).toHaveBeenCalled();
+      expect(mockPrisma.room.updateMany).toHaveBeenCalled();
     });
 
     it('rejects invalid roleConfig', async () => {
@@ -306,7 +321,6 @@ describe('RoomService', () => {
         .mockResolvedValueOnce(mockRoom)     // getRoom check
         .mockResolvedValueOnce(mockRoom)     // getRoom inside getPlayerCount
         .mockResolvedValueOnce({ ...mockRoom, maxPlayers: 7 }); // getRoom return refreshed
-      mockPrisma.room.update.mockResolvedValue({ ...mockRoom, maxPlayers: 7 });
       mockPrisma.roomPlayer.count.mockResolvedValue(3);
 
       const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
@@ -314,7 +328,10 @@ describe('RoomService', () => {
       });
 
       expect(result).toHaveProperty('maxPlayers', 7);
-      expect(mockRedis.hset).toHaveBeenCalledWith('room:ABCDEF', 'maxPlayers', '7');
+      expect(mockPrisma.room.updateMany).toHaveBeenCalledWith({
+        where: { id: 'room-1', status: 'WAITING' },
+        data: expect.objectContaining({ maxPlayers: 7 }),
+      });
     });
 
     it('with only roleConfig works', async () => {
@@ -322,14 +339,13 @@ describe('RoomService', () => {
       mockPrisma.room.findUnique
         .mockResolvedValueOnce(mockRoom)
         .mockResolvedValueOnce({ ...mockRoom, roleConfig: newConfig });
-      mockPrisma.room.update.mockResolvedValue({ ...mockRoom, roleConfig: newConfig });
 
       const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
         roleConfig: newConfig as PartialRoleConfig,
       });
 
       expect(result).toHaveProperty('roleConfig');
-      expect(mockPrisma.room.update).toHaveBeenCalled();
+      expect(mockPrisma.room.updateMany).toHaveBeenCalled();
     });
 
     it('with no changes returns current room', async () => {
@@ -339,7 +355,7 @@ describe('RoomService', () => {
 
       expect(result).toHaveProperty('id', 'room-1');
       expect(result).toHaveProperty('code', 'ABCDEF');
-      expect(mockPrisma.room.update).not.toHaveBeenCalled();
+      expect(mockPrisma.room.updateMany).not.toHaveBeenCalled();
     });
 
     it('accepts valid SGS roleConfig for SGS room', async () => {
@@ -353,14 +369,13 @@ describe('RoomService', () => {
       mockPrisma.room.findUnique
         .mockResolvedValueOnce(sgsRoom)
         .mockResolvedValueOnce({ ...sgsRoom, roleConfig: newSgsConfig });
-      mockPrisma.room.update.mockResolvedValue({ ...sgsRoom, roleConfig: newSgsConfig });
 
       const result = await service.updateRoomSettings('ABCDEF', 'host-1', {
         roleConfig: newSgsConfig,
       });
 
       expect('error' in result).toBe(false);
-      expect(mockPrisma.room.update).toHaveBeenCalled();
+      expect(mockPrisma.room.updateMany).toHaveBeenCalled();
     });
   });
 
@@ -376,9 +391,8 @@ describe('RoomService', () => {
       updatedAt: new Date(),
     };
 
-    it('deletes the room player and updates cached player count', async () => {
+    it('deletes the room player and clears the offline marker', async () => {
       mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
-      mockPrisma.roomPlayer.count.mockResolvedValue(1);
 
       await service.leaveRoom('ABCDEF', 'user-1');
 
@@ -386,7 +400,26 @@ describe('RoomService', () => {
         where: { roomId: 'room-1', userId: 'user-1' },
       });
       expect(mockRedis.del).toHaveBeenCalledWith('room:ABCDEF:offline:user-1');
-      expect(mockRedis.hset).toHaveBeenCalledWith('room:ABCDEF', 'playerCount', '1');
+      expect(mockRedis.hset).not.toHaveBeenCalledWith('room:ABCDEF', 'playerCount', expect.anything());
+    });
+
+    it('transfers host to an online member when the host leaves', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([
+        { id: 'p-2', roomId: 'room-1', userId: 'u-offline', seatNo: 2 },
+        { id: 'p-3', roomId: 'room-1', userId: 'u-online', seatNo: 3 },
+      ]);
+      // u-offline has an offline marker; u-online does not
+      mockRedis.get.mockImplementation(async (key: string) =>
+        key.endsWith(':u-offline') ? '1' : null,
+      );
+
+      await service.leaveRoom('ABCDEF', 'host-1');
+
+      expect(mockPrisma.room.update).toHaveBeenCalledWith({
+        where: { id: 'room-1' },
+        data: { hostId: 'u-online', updatedAt: expect.any(Date) },
+      });
     });
   });
 
@@ -419,7 +452,8 @@ describe('RoomService', () => {
         where: { id: 'room-1' },
         data: { status: 'WAITING' },
       });
-      expect(mockRedis.hset).toHaveBeenCalledWith('room:ABCDEF', 'status', 'WAITING');
+      expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
+      expect(mockRedis.hset).not.toHaveBeenCalledWith('room:ABCDEF', 'status', expect.anything());
     });
 
     it('non-existent room → returns error', async () => {
@@ -533,6 +567,78 @@ describe('RoomService', () => {
         expect(seatShuffleCalls).toHaveLength(0);
       }
     });
+
+    it('flips status with an atomic WAITING guard, then reads players inside the transaction', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(sgsRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(buildPlayers(5));
+      mockPrisma.gameRecord.create.mockResolvedValue({});
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toHaveProperty('assignments');
+      expect(mockPrisma.room.updateMany).toHaveBeenCalledWith({
+        where: { id: 'room-1', status: 'WAITING' },
+        data: { status: 'PLAYING' },
+      });
+      // The player list must be read AFTER the status flip so concurrent
+      // join/leave cannot produce role-less players or lost assignments.
+      const flipOrder = mockPrisma.room.updateMany.mock.invocationCallOrder[0];
+      const readOrder = mockPrisma.roomPlayer.findMany.mock.invocationCallOrder[0];
+      expect(flipOrder).toBeLessThan(readOrder);
+    });
+
+    it('concurrent start (flip affected 0 rows) → clean error, nothing persisted', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(sgsRoom);
+      mockPrisma.room.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: '游戏已开始' });
+      expect(mockPrisma.roomPlayer.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.roomPlayer.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.gameRecord.create).not.toHaveBeenCalled();
+    });
+
+    it('rolls back PLAYING when Avalon Redis init fails', async () => {
+      const avalonRoom = {
+        ...sgsRoom,
+        gameType: GameType.AVALON,
+        roleConfig: {
+          merlin: true,
+          percival: false,
+          mordred: false,
+          morgana: false,
+          oberon: false,
+          assassin: true,
+          loyalServants: 2,
+          minions: 1,
+        },
+      };
+      const playingRoom = { ...avalonRoom, status: 'PLAYING' as const };
+      const players = buildPlayers(5);
+
+      mockPrisma.room.findUnique
+        .mockResolvedValueOnce(avalonRoom)
+        .mockResolvedValueOnce(playingRoom)
+        .mockResolvedValueOnce(playingRoom)
+        .mockResolvedValueOnce(playingRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(players);
+      mockPrisma.gameRecord.create.mockResolvedValue({});
+      mockPrisma.gameRecord.updateMany.mockResolvedValue({ count: 1 });
+
+      service.setAvalonGameInitializer({
+        initializeGame: jest.fn().mockRejectedValue(new Error('redis down')),
+      });
+
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ error: 'Avalon 游戏状态初始化失败' });
+      expect(mockPrisma.room.update).toHaveBeenCalledWith({
+        where: { id: 'room-1' },
+        data: { status: 'WAITING' },
+      });
+      expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
+    });
   });
 
   describe('joinRoom status guards', () => {
@@ -574,6 +680,224 @@ describe('RoomService', () => {
       const result = await service.kickPlayer('ABCDEF', 'host-1', 'u2');
       expect(result).toEqual({ error: '游戏进行中，无法踢人' });
       expect(mockPrisma.roomPlayer.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('returns an error when the target is not in the room', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.roomPlayer.deleteMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.kickPlayer('ABCDEF', 'host-1', 'ghost-user');
+
+      expect(result).toEqual({ error: '该玩家不在房间中' });
+    });
+  });
+
+  describe('joinRoom transaction safety', () => {
+    const waitingRoom = {
+      id: 'room-1',
+      code: 'ABCDEF',
+      hostId: 'host-1',
+      status: 'WAITING' as const,
+      gameType: GameType.AVALON,
+      roleConfig: { merlin: true, percival: false, mordred: false, morgana: false, oberon: false, assassin: true, loyalServants: 2, minions: 1 },
+      maxPlayers: 5,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    function buildTx(playerCount: number) {
+      return {
+        room: {
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        roomPlayer: {
+          count: jest.fn().mockResolvedValue(playerCount),
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([{ seatNo: 1 }]),
+          create: jest.fn().mockImplementation(async ({ data }: any) => ({
+            id: `p-${data.userId}`,
+            roomId: data.roomId,
+            userId: data.userId,
+            seatNo: data.seatNo,
+            joinedAt: new Date(),
+          })),
+        },
+      };
+    }
+
+    it('assigns the seat through the transaction client, not the root prisma', async () => {
+      const tx = buildTx(1);
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(tx));
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue(null);
+      mockPrisma.roomPlayer.count.mockResolvedValue(2);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([]);
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u-new', nickName: 'n', avatarUrl: '' });
+
+      const result = await service.joinRoom('ABCDEF', 'u-new');
+
+      expect(result).toHaveProperty('player');
+      // Room row is locked first via a status-guarded update
+      expect(tx.room.updateMany).toHaveBeenCalledWith({
+        where: { id: 'room-1', status: 'WAITING' },
+        data: { updatedAt: expect.any(Date) },
+      });
+      expect(tx.roomPlayer.create).toHaveBeenCalledWith({
+        data: { roomId: 'room-1', userId: 'u-new', seatNo: 2 },
+      });
+      expect(mockPrisma.roomPlayer.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the room is full (capacity enforced inside the transaction)', async () => {
+      const tx = buildTx(5);
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(tx));
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue(null);
+
+      const result = await service.joinRoom('ABCDEF', 'u-new');
+
+      expect(result).toEqual({ error: '房间已满' });
+      expect(tx.roomPlayer.create).not.toHaveBeenCalled();
+    });
+
+    it('two concurrent joins cannot both pass the capacity check', async () => {
+      // Simulates the room row lock: transactions are serialized and each one
+      // observes the other one's committed player rows.
+      let committedPlayers = 4; // maxPlayers 5 → exactly one seat left
+      let lock: Promise<void> = Promise.resolve();
+      const acquireLock = () => {
+        const prev = lock;
+        let release!: () => void;
+        lock = new Promise<void>((r) => (release = r));
+        return prev.then(() => release);
+      };
+
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+        const release = await acquireLock();
+        const tx = {
+          room: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+          roomPlayer: {
+            count: jest.fn().mockImplementation(async () => committedPlayers),
+            findFirst: jest.fn().mockResolvedValue(null),
+            findMany: jest.fn().mockImplementation(async () =>
+              Array.from({ length: committedPlayers }, (_, i) => ({ seatNo: i + 1 })),
+            ),
+            create: jest.fn().mockImplementation(async ({ data }: any) => {
+              committedPlayers++;
+              return { id: `p-${data.userId}`, roomId: data.roomId, userId: data.userId, seatNo: data.seatNo, joinedAt: new Date() };
+            }),
+          },
+        };
+        try {
+          return await cb(tx);
+        } finally {
+          release();
+        }
+      });
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue(null);
+      mockPrisma.roomPlayer.count.mockImplementation(async () => committedPlayers);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([]);
+      mockPrisma.user.findUnique.mockImplementation(async ({ where }: any) => ({
+        id: where.id,
+        nickName: 'n',
+        avatarUrl: '',
+      }));
+
+      const [r1, r2] = await Promise.all([
+        service.joinRoom('ABCDEF', 'u-a'),
+        service.joinRoom('ABCDEF', 'u-b'),
+      ]);
+
+      const successes = [r1, r2].filter((r) => !('error' in r));
+      const errors = [r1, r2].filter((r) => 'error' in r);
+      expect(successes).toHaveLength(1);
+      expect(errors).toEqual([{ error: '房间已满' }]);
+    });
+  });
+
+  describe('markPlayerOffline', () => {
+    const waitingRoom = {
+      id: 'room-1',
+      code: 'ABCDEF',
+      hostId: 'host-1',
+      status: 'WAITING' as const,
+      gameType: GameType.AVALON,
+      roleConfig: {},
+      maxPlayers: 5,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    it('stores the offline marker WITHOUT a TTL', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+
+      await service.markPlayerOffline('ABCDEF', 'u-1');
+
+      expect(mockRedis.set).toHaveBeenCalledWith('room:ABCDEF:offline:u-1', expect.any(String));
+      expect(mockRedis.set.mock.calls[0]).toHaveLength(2);
+    });
+
+    it('transfers host to an online member when the host goes offline mid-game', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue({ ...waitingRoom, status: 'PLAYING' as const });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([
+        { id: 'p-1', roomId: 'room-1', userId: 'host-1', seatNo: 1, role: '梅林', joinedAt: new Date(), user: { id: 'host-1', nickName: 'h', avatarUrl: '' } },
+        { id: 'p-2', roomId: 'room-1', userId: 'u-2', seatNo: 2, role: '忠臣', joinedAt: new Date(), user: { id: 'u-2', nickName: 'a', avatarUrl: '' } },
+        { id: 'p-3', roomId: 'room-1', userId: 'u-3', seatNo: 3, role: '忠臣', joinedAt: new Date(), user: { id: 'u-3', nickName: 'b', avatarUrl: '' } },
+      ]);
+      // u-2 is also offline → the online u-3 must become host
+      mockRedis.get.mockImplementation(async (key: string) =>
+        key.endsWith(':u-2') ? '1' : null,
+      );
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({
+        id: 'p-3', roomId: 'room-1', userId: 'u-3', seatNo: 3,
+      });
+
+      await service.markPlayerOffline('ABCDEF', 'host-1');
+
+      expect(mockPrisma.room.updateMany).toHaveBeenCalledWith({
+        where: { id: 'room-1', status: 'PLAYING', hostId: 'host-1' },
+        data: { hostId: 'u-3' },
+      });
+    });
+
+    it('does not transfer host in a WAITING room', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+
+      await service.markPlayerOffline('ABCDEF', 'host-1');
+
+      const hostUpdates = mockPrisma.room.update.mock.calls.filter(
+        (call: any) => call[0]?.data?.hostId,
+      );
+      expect(hostUpdates).toHaveLength(0);
+    });
+  });
+
+  describe('cleanupOfflinePlayers', () => {
+    it('broadcasts via the registered notifier after removing offline players', async () => {
+      const waitingRoom = {
+        id: 'room-1',
+        code: 'ABCDEF',
+        hostId: 'host-1',
+        status: 'WAITING' as const,
+        gameType: GameType.AVALON,
+        roleConfig: {},
+        maxPlayers: 5,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      mockPrisma.room.findMany.mockResolvedValue([{ code: 'ABCDEF' }]);
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([
+        { id: 'p-1', roomId: 'room-1', userId: 'u-1', seatNo: 1, role: null, joinedAt: new Date(), user: { id: 'u-1', nickName: 'a', avatarUrl: '' } },
+      ]);
+      mockRedis.get.mockResolvedValue('1'); // everyone offline
+      const notifier = { notifyClientsAfterLeave: jest.fn().mockResolvedValue(undefined) };
+      service.setEventsNotifier(notifier);
+
+      await service.cleanupOfflinePlayers();
+
+      expect(notifier.notifyClientsAfterLeave).toHaveBeenCalledWith('ABCDEF', 'u-1');
     });
   });
 });

@@ -24,10 +24,28 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  const corsOrigin = configService.get('CORS_ORIGIN');
+  // CORS_ORIGIN 支持逗号分隔多个来源
+  const corsOrigins = (configService.get<string>('CORS_ORIGIN') || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   const enableCredentials = configService.get('CORS_CREDENTIALS') !== 'false';
+  if (enableCredentials && corsOrigins.length === 0) {
+    app.get(Logger).warn(
+      'CORS_CREDENTIALS=true 且未配置 CORS_ORIGIN：所有跨域请求都会被静默拒绝。' +
+        '如需浏览器/H5 跨域调试，请配置 CORS_ORIGIN（支持逗号分隔多个来源）。',
+    );
+  }
+  let corsOrigin: string | string[];
+  if (corsOrigins.length > 0) {
+    corsOrigin = corsOrigins;
+  } else if (enableCredentials) {
+    corsOrigin = [];
+  } else {
+    corsOrigin = '*';
+  }
   app.enableCors({
-    origin: corsOrigin || (enableCredentials ? [] : '*'),
+    origin: corsOrigin,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: enableCredentials,
   });
@@ -55,8 +73,13 @@ async function bootstrap() {
   }
 
   const port = process.env.PORT || 3000;
+  // 让 PrismaService / RedisService 的 OnModuleDestroy 在进程退出时被执行
+  app.enableShutdownHooks();
   await app.listen(port);
   app.get(Logger).log(`NightDeal backend is running on: http://localhost:${port}`);
   app.get(Logger).log(`Swagger docs: http://localhost:${port}/api/docs`);
 }
-bootstrap();
+bootstrap().catch((error) => {
+  console.error('Fatal error during bootstrap:', error);
+  process.exit(1);
+});

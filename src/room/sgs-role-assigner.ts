@@ -37,6 +37,43 @@ export function getSgsDefaultConfig(playerCount: number): SgsRoleConfig {
   return SGS_DEFAULT_CONFIGS[n] ?? SGS_DEFAULT_CONFIGS[SGS_MIN_PLAYERS];
 }
 
+function assignFourPlayerSgsRoles(
+  players: { seatNo: number; userId: string }[],
+): SgsRoleAssignment[] {
+  const teamForSeats14: 'monarch' | 'rebel' = randomInt(0, 2) === 0 ? 'monarch' : 'rebel';
+  const teamForSeats23: 'monarch' | 'rebel' = teamForSeats14 === 'monarch' ? 'rebel' : 'monarch';
+
+  const roleForSeats14 = teamForSeats14 === 'monarch' ? '忠臣' : '反贼';
+  const roleForSeats23 = teamForSeats23 === 'monarch' ? '忠臣' : '反贼';
+
+  const roleBySeat: Record<number, { role: string; team: 'monarch' | 'rebel' }> = {
+    1: { role: roleForSeats14, team: teamForSeats14 },
+    2: { role: roleForSeats23, team: teamForSeats23 },
+    3: { role: roleForSeats23, team: teamForSeats23 },
+    4: { role: roleForSeats14, team: teamForSeats14 },
+  };
+
+  return players.map((player) => {
+    const assignment = roleBySeat[player.seatNo];
+    if (!assignment) {
+      throw new Error(`四人局期望座位号为 1-4，实际为 ${player.seatNo}`);
+    }
+    return {
+      seatNo: player.seatNo,
+      userId: player.userId,
+      role: assignment.role,
+      team: assignment.team,
+    };
+  });
+}
+
+function isFourPlayerPairingConfig(config: SgsRoleConfig): boolean {
+  return config.monarch === 0
+    && config.loyalist === 2
+    && config.rebel === 2
+    && config.traitor === 0;
+}
+
 export function assignSgsRoles(
   players: { seatNo: number; userId: string }[],
   config?: SgsRoleConfig,
@@ -49,6 +86,10 @@ export function assignSgsRoles(
 
   if (totalRoles !== playerCount) {
     throw new Error(`角色总数(${totalRoles})与玩家数量(${playerCount})不匹配`);
+  }
+
+  if (playerCount === 4 && isFourPlayerPairingConfig(resolvedConfig)) {
+    return assignFourPlayerSgsRoles(players);
   }
 
   const rolePool: { role: string; team: 'monarch' | 'rebel' | 'traitor' }[] = [];

@@ -9,6 +9,7 @@ import {
   NotFoundException,
   ConflictException,
   GoneException,
+  GatewayTimeoutException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { Response } from 'express';
@@ -58,6 +59,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
       businessCode = 41001;
     } else if (status === 429) {
       businessCode = 42901;
+    } else if (exception instanceof GatewayTimeoutException) {
+      businessCode = 50401;
     } else if (exception instanceof WeChatApiException) {
       businessCode = 50002;
     } else if (exception instanceof InternalServerErrorException) {
@@ -70,23 +73,38 @@ export class HttpExceptionFilter implements ExceptionFilter {
       '40001': '参数错误',
       '40101': '未登录',
       '40301': '无权限操作',
-      '40401': '房间不存在',
+      '40401': '资源不存在',
       '40901': '已在房间中',
       '41001': '接口已废弃',
       '42901': '请求过于频繁',
       '50001': '服务器内部错误',
       '50002': '微信服务暂时不可用，请稍后重试',
+      '50401': '请求超时，请稍后重试',
     };
 
     const isProduction = process.env.NODE_ENV === 'production';
-    const defaultMessage = defaults[businessCode.toString()];
+    let defaultMessage = defaults[businessCode.toString()];
+    // 40401 的默认文案不能一刀切：只有异常 message 确实是房间相关业务时才映射为
+    // 「房间不存在」，其余 404（如路由不存在）用通用的「资源不存在」
+    if (
+      businessCode === 40401
+      && typeof message === 'string'
+      && message.includes('房间')
+    ) {
+      defaultMessage = '房间不存在';
+    }
     const isServerError = status >= 500;
     const finalMessage = message ? (Array.isArray(message) ? message[0] : message) : defaultMessage;
     const publicMessage = isServerError ? defaultMessage : finalMessage;
 
     const responseBody: Record<string, unknown> = {
       code: businessCode,
-      message: isProduction ? defaultMessage : publicMessage,
+      // 生产环境只屏蔽 5xx 的具体原因；4xx 业务错误保留原始 message 供客户端提示。
+      // 404 例外：无论环境都走映射文案，避免路由 404 暴露内部路径、业务 404 语义串扰。
+      message:
+        (isServerError || businessCode === 40401)
+          ? defaultMessage
+          : publicMessage,
     };
     if (!isProduction) {
       responseBody.error = sanitizeExceptionResponse(

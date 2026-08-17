@@ -51,6 +51,15 @@ export function generateRoles(
   // 从配置中获取启用的角色
   const enabledRoles = config.roles;
 
+  // 标准规则要求梅林和刺客必须存在：缺梅林时邪恶阵营没有刺杀目标，
+  // 缺刺客时好人 3 胜进入刺杀阶段后无人能操作，游戏永久死局。
+  if (!enabledRoles.includes('Merlin')) {
+    throw new Error('角色配置必须包含梅林(Merlin)');
+  }
+  if (!enabledRoles.includes('Assassin')) {
+    throw new Error('角色配置必须包含刺客(Assassin)');
+  }
+
   // 分离好人和邪恶角色
   const goodRoles: AvalonRole[] = [];
   const evilRoles: AvalonRole[] = [];
@@ -249,6 +258,20 @@ export function createInitialState(
 }
 
 /**
+ * 房主确认身份揭示结束，进入组队阶段
+ */
+export function beginGame(state: AvalonGameState, hostId: PlayerId): AvalonGameState {
+  if (state.phase !== 'role_reveal') {
+    throw new Error('当前不是身份揭示阶段');
+  }
+  const host = state.players.find(p => p.id === hostId);
+  if (!host || !host.isHost) {
+    throw new Error('仅房主可以开始任务阶段');
+  }
+  return { ...state, phase: 'team_building' };
+}
+
+/**
  * 提议任务队伍
  * @param state 当前游戏状态
  * @param leaderId 队长 ID
@@ -343,6 +366,12 @@ export function submitTeamVote(
 export function resolveTeamVote(
   state: AvalonGameState,
 ): { result: TeamVoteResult; newState: AvalonGameState } {
+  // 阶段校验：弱网下两名玩家同时触发解析时，后到的调用必须失败，
+  // 否则同一轮投票会被计分两次。
+  if (state.phase !== 'team_voting') {
+    throw new Error('当前不是投票阶段');
+  }
+
   const votes = state.teamVotes;
   const totalVoters = state.players.length;
   const votedCount = Object.keys(votes).length;
@@ -468,6 +497,11 @@ export function submitQuestAction(
 export function resolveQuest(
   state: AvalonGameState,
 ): { result: QuestResult; newState: AvalonGameState } {
+  // 阶段校验：同 resolveTeamVote，防止并发触发导致任务被重复计分。
+  if (state.phase !== 'quest_action') {
+    throw new Error('当前不是任务执行阶段');
+  }
+
   const actions = state.questActions;
   const teamSize = state.proposedTeam.length;
   const actedCount = Object.keys(actions).length;
@@ -514,13 +548,14 @@ export function resolveQuest(
 
   // 检查是否有人获胜
   if (newGoodScore >= 3) {
-    // 好人完成3个任务，进入刺杀阶段
+    // 好人完成3个任务，进入刺杀阶段。
+    // 终局分支不再 round+1：第 5 轮定胜负时 round 会变成 6，
+    // 之后 getPlayerView 构建 currentQuestConfig 会因 round 越界抛异常。
     return {
       result: questResult,
       newState: {
         ...state,
         phase: 'assassination',
-        round: state.round + 1,
         goodScore: newGoodScore,
         evilScore: newEvilScore,
         questHistory: newHistory,
@@ -533,13 +568,12 @@ export function resolveQuest(
   }
 
   if (newEvilScore >= 3) {
-    // 邪恶破坏3个任务，邪恶直接获胜
+    // 邪恶破坏3个任务，邪恶直接获胜（同样不推进 round，理由同上）
     return {
       result: questResult,
       newState: {
         ...state,
         phase: 'finished',
-        round: state.round + 1,
         goodScore: newGoodScore,
         evilScore: newEvilScore,
         questHistory: newHistory,

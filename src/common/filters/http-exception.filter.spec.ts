@@ -1,4 +1,4 @@
-import { ArgumentsHost, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException, GatewayTimeoutException, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
 import { WeChatApiException } from '../exceptions/wechat-api.exception';
 
@@ -63,6 +63,95 @@ describe('HttpExceptionFilter', () => {
     expect(json).toHaveBeenCalledWith(expect.objectContaining({
       code: 40001,
       message: '昵称不能为空',
+    }));
+  });
+
+  it('keeps client-side 4xx messages visible in production', () => {
+    process.env.NODE_ENV = 'production';
+    const filter = new HttpExceptionFilter();
+    const { host, json } = createHost();
+
+    filter.catch(new BadRequestException('昵称不能为空'), host);
+
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 40001,
+      message: '昵称不能为空',
+    }));
+
+    filter.catch(new UnauthorizedException('登录态失效'), host);
+
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 40101,
+      message: '登录态失效',
+    }));
+  });
+
+  it('masks 5xx messages with a generic one in production', () => {
+    process.env.NODE_ENV = 'production';
+    const filter = new HttpExceptionFilter();
+    const { host, json } = createHost();
+
+    filter.catch(new InternalServerErrorException('database password leaked'), host);
+
+    const body = json.mock.calls[0][0];
+    expect(body.code).toBe(50001);
+    expect(body.message).toBe('服务器内部错误');
+    expect(JSON.stringify(body)).not.toContain('database password leaked');
+  });
+
+  it('maps room-related 404 to 房间不存在 in development', () => {
+    process.env.NODE_ENV = 'development';
+    const filter = new HttpExceptionFilter();
+    const { host, json } = createHost();
+
+    filter.catch(new NotFoundException('房间不存在或已解散'), host);
+
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 40401,
+      message: '房间不存在',
+    }));
+  });
+
+  it('maps room-related 404 to 房间不存在 in production', () => {
+    process.env.NODE_ENV = 'production';
+    const filter = new HttpExceptionFilter();
+    const { host, json } = createHost();
+
+    filter.catch(new NotFoundException('房间不存在或已解散'), host);
+
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 40401,
+      message: '房间不存在',
+    }));
+  });
+
+  it('maps route 404 to a generic 资源不存在 in production', () => {
+    process.env.NODE_ENV = 'production';
+    const filter = new HttpExceptionFilter();
+    const { host, json } = createHost();
+
+    filter.catch(new NotFoundException('Cannot GET /api/unknown'), host);
+
+    const body = json.mock.calls[0][0];
+    expect(body).toEqual(expect.objectContaining({
+      code: 40401,
+      message: '资源不存在',
+    }));
+    expect(JSON.stringify(body)).not.toContain('Cannot GET');
+  });
+
+  it('maps GatewayTimeoutException to 50401 with matching HTTP status', () => {
+    process.env.NODE_ENV = 'development';
+    const filter = new HttpExceptionFilter();
+    const { host, status, json } = createHost();
+
+    filter.catch(new GatewayTimeoutException('微信登录请求超时，请稍后重试'), host);
+
+    expect(status).toHaveBeenCalledWith(504);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 50401,
+      // 5xx 对外统一使用通用文案
+      message: '请求超时，请稍后重试',
     }));
   });
 });

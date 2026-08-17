@@ -25,6 +25,7 @@ import {
   assignRoles,
   getFaction,
   createInitialState,
+  beginGame as engineBeginGame,
   proposeTeam as engineProposeTeam,
   submitTeamVote as engineSubmitTeamVote,
   resolveTeamVote as engineResolveTeamVote,
@@ -35,13 +36,33 @@ import {
 } from './game-engine';
 import { getPlayerView, getTeamVoteView, getQuestActionView } from './visibility';
 
-const GAME_STATE_TTL = 3600 * 4; // 4小时
+const GAME_STATE_TTL = 3600 * 24; // 24小时，游戏结束后状态保留一段时间供复盘，到期自动清理
 
 @Injectable()
 export class AvalonService {
   private readonly logger = new Logger(AvalonService.name);
+  // 每个房间一条 Promise 链，把同一 roomCode 的写操作串行化：
+  // 弱网下两名玩家同时提交最后一票时，两次 resolve 会排队执行，
+  // 后到的 resolve 因引擎阶段校验失败而安全落空，不会双重计分。
+  // 进程内锁，当前按单实例部署；多实例需要换成 Redis SET NX EX。
+  private roomChains = new Map<string, Promise<unknown>>();
 
   constructor(private redis: RedisService) {}
+
+  /**
+   * 串行执行同一房间的写操作（进程内）。链结束后删掉 Map 条目，避免房间码常驻。
+   */
+  private withRoomLock<T>(roomCode: string, fn: () => Promise<T>): Promise<T> {
+    const chained = (this.roomChains.get(roomCode) ?? Promise.resolve()).then(fn);
+    const tracked = chained.catch(() => undefined);
+    this.roomChains.set(roomCode, tracked);
+    void tracked.finally(() => {
+      if (this.roomChains.get(roomCode) === tracked) {
+        this.roomChains.delete(roomCode);
+      }
+    });
+    return chained;
+  }
 
   // ==================== 游戏状态管理 ====================
 
@@ -63,13 +84,25 @@ export class AvalonService {
       JSON.stringify(state),
       GAME_STATE_TTL,
     );
+    // Touch the room's activity marker so idle-room cleanup does not mistake
+    // an actively-played game (stable connections, no disconnects for >1h)
+    // for an abandoned one. Avalon game actions never route through
+    // markPlayerOnline/Offline, so without this the room would look idle even
+    // while players are mid-game and be cascade-deleted along with its state.
+    await this.redis.hset(
+      `room:${roomCode}`,
+      'lastActiveAt',
+      Date.now().toString(),
+    );
   }
 
   /**
    * 删除游戏状态
    */
   async deleteGameState(roomCode: string): Promise<void> {
-    await this.redis.del(`avalon:${roomCode}:state`);
+    return this.withRoomLock(roomCode, async () => {
+      await this.redis.del(`avalon:${roomCode}:state`);
+    });
   }
 
   // ==================== 游戏初始化 ====================
@@ -79,61 +112,120 @@ export class AvalonService {
    * @param roomCode 房间号
    * @param players 玩家列表
    * @param config 游戏配置
+   * @param precomputedAssignments 预先计算好的角色分配（如 startGame 事务内已持久化的分配）。
+   *        传入后跳过随机分配，保证 Redis 游戏状态与 DB 中的 roomPlayer.role 一致。
    * @returns 每个玩家的角色分配（用于私信发送）
    */
   async initializeGame(
     roomCode: string,
     players: { seatNo: number; userId: string; name: string; isHost: boolean }[],
     config: AvalonGameConfig,
+    precomputedAssignments?: { userId: string; role: AvalonRole }[],
   ): Promise<Map<PlayerId, { role: AvalonRole; faction: Faction }>> {
-    // 生成角色
-    const roles = generateRoles(players.length, config);
+    return this.withRoomLock(roomCode, async () => {
+      let assignments: { seatNo: number; userId: string; role: AvalonRole; faction: Faction }[];
 
-    // 分配角色
-    const assignments = assignRoles(
-      players.map(p => ({ seatNo: p.seatNo, userId: p.userId })),
-      roles,
-    );
+      if (precomputedAssignments) {
+        // Guard count first: a precomputed assignment list must cover exactly
+        // the players, otherwise the DB role entries would diverge from the
+        // Redis game state (extra assignments belong to users not in the game).
+        if (precomputedAssignments.length !== players.length) {
+          throw new Error(
+            `预计算角色分配数量(${precomputedAssignments.length})与玩家数量(${players.length})不匹配`,
+          );
+        }
+        const assignmentMap = new Map(precomputedAssignments.map(a => [a.userId, a.role]));
+        assignments = players.map(p => {
+          const role = assignmentMap.get(p.userId);
+          if (!role) {
+            throw new Error(`缺少玩家 ${p.userId} 的角色分配`);
+          }
+          return {
+            seatNo: p.seatNo,
+            userId: p.userId,
+            role,
+            faction: getFaction(role),
+          };
+        });
+      } else {
+        // 生成角色（含 Merlin/Assassin 必需校验，配置非法时抛错拒绝开局）
+        const roles = generateRoles(players.length, config);
 
-    // 构建玩家列表
-    const avalonPlayers: AvalonPlayer[] = assignments.map((assignment, index) => ({
-      id: assignment.userId,
-      name: players[index].name,
-      seatNo: assignment.seatNo,
-      isHost: players[index].isHost,
-      isConnected: true,
-      role: assignment.role,
-      faction: assignment.faction,
-    }));
+        // 分配角色
+        assignments = assignRoles(
+          players.map(p => ({ seatNo: p.seatNo, userId: p.userId })),
+          roles,
+        );
+      }
 
-    // 创建初始状态
-    const state = createInitialState(roomCode, avalonPlayers, config);
-
-    // 找到刺客和梅林
-    const assassin = avalonPlayers.find(p => p.role === 'Assassin');
-    const merlin = avalonPlayers.find(p => p.role === 'Merlin');
-
-    if (assassin) {
-      state.assassinId = assassin.id;
-    }
-    if (merlin) {
-      state.merlinId = merlin.id;
-    }
-
-    // 保存状态
-    await this.saveGameState(roomCode, state);
-
-    // 返回角色分配结果
-    const roleAssignments = new Map<PlayerId, { role: AvalonRole; faction: Faction }>();
-    for (const assignment of assignments) {
-      roleAssignments.set(assignment.userId, {
-        role: assignment.role,
-        faction: assignment.faction,
+      const playerById = new Map(players.map((p) => [p.userId, p]));
+      const avalonPlayers: AvalonPlayer[] = assignments.map((assignment) => {
+        const player = playerById.get(assignment.userId);
+        if (!player) {
+          throw new Error(`玩家 ${assignment.userId} 不在玩家列表中`);
+        }
+        return {
+          id: assignment.userId,
+          name: player.name,
+          seatNo: assignment.seatNo,
+          isHost: player.isHost,
+          isConnected: true,
+          role: assignment.role,
+          faction: assignment.faction,
+        };
       });
-    }
 
-    this.logger.log(`Game initialized for room ${roomCode}: ${players.length} players`);
-    return roleAssignments;
+      // 创建初始状态
+      const state = createInitialState(roomCode, avalonPlayers, config);
+
+      // 找到刺客和梅林
+      const assassin = avalonPlayers.find(p => p.role === 'Assassin');
+      const merlin = avalonPlayers.find(p => p.role === 'Merlin');
+
+      if (assassin) {
+        state.assassinId = assassin.id;
+      }
+      if (merlin) {
+        state.merlinId = merlin.id;
+      }
+
+      // 保存状态
+      await this.saveGameState(roomCode, state);
+
+      // 返回角色分配结果
+      const roleAssignments = new Map<PlayerId, { role: AvalonRole; faction: Faction }>();
+      for (const assignment of assignments) {
+        roleAssignments.set(assignment.userId, {
+          role: assignment.role,
+          faction: assignment.faction,
+        });
+      }
+
+      this.logger.log(`Game initialized for room ${roomCode}: ${players.length} players`);
+      return roleAssignments;
+    });
+  }
+
+  /**
+   * 开始任务阶段：房主确认身份已看完后，把游戏从 role_reveal 推进到 team_building
+   */
+  async beginGame(
+    roomCode: string,
+    hostId: PlayerId,
+  ): Promise<{ success: true; phase: AvalonGameState['phase']; round: number } | { error: string }> {
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return { error: '游戏不存在' };
+
+      try {
+        const newState = engineBeginGame(state, hostId);
+        await this.saveGameState(roomCode, newState);
+        this.logger.log(`Room ${roomCode} advanced to team_building by host ${hostId}`);
+        return { success: true, phase: newState.phase, round: newState.round };
+      } catch (error) {
+        return { error: (error as Error).message };
+      }
+    });
   }
 
   // ==================== 游戏操作 ====================
@@ -169,16 +261,18 @@ export class AvalonService {
     leaderId: PlayerId,
     selectedPlayerIds: PlayerId[],
   ): Promise<{ success: true } | { error: string }> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return { error: '游戏不存在' };
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return { error: '游戏不存在' };
 
-    try {
-      const newState = engineProposeTeam(state, leaderId, selectedPlayerIds);
-      await this.saveGameState(roomCode, newState);
-      return { success: true };
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
+      try {
+        const newState = engineProposeTeam(state, leaderId, selectedPlayerIds);
+        await this.saveGameState(roomCode, newState);
+        return { success: true };
+      } catch (error) {
+        return { error: (error as Error).message };
+      }
+    });
   }
 
   /**
@@ -189,16 +283,18 @@ export class AvalonService {
     playerId: PlayerId,
     vote: TeamVote,
   ): Promise<{ success: true } | { error: string }> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return { error: '游戏不存在' };
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return { error: '游戏不存在' };
 
-    try {
-      const newState = engineSubmitTeamVote(state, playerId, vote);
-      await this.saveGameState(roomCode, newState);
-      return { success: true };
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
+      try {
+        const newState = engineSubmitTeamVote(state, playerId, vote);
+        await this.saveGameState(roomCode, newState);
+        return { success: true };
+      } catch (error) {
+        return { error: (error as Error).message };
+      }
+    });
   }
 
   /**
@@ -207,23 +303,25 @@ export class AvalonService {
   async resolveTeamVote(
     roomCode: string,
   ): Promise<{ result: TeamVoteResult; views: Map<PlayerId, PlayerView> } | { error: string }> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return { error: '游戏不存在' };
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return { error: '游戏不存在' };
 
-    try {
-      const { result, newState } = engineResolveTeamVote(state);
-      await this.saveGameState(roomCode, newState);
+      try {
+        const { result, newState } = engineResolveTeamVote(state);
+        await this.saveGameState(roomCode, newState);
 
-      // 获取所有玩家视角
-      const views = new Map<PlayerId, PlayerView>();
-      for (const player of newState.players) {
-        views.set(player.id, getPlayerView(newState, player.id));
+        // 获取所有玩家视角
+        const views = new Map<PlayerId, PlayerView>();
+        for (const player of newState.players) {
+          views.set(player.id, getPlayerView(newState, player.id));
+        }
+
+        return { result, views };
+      } catch (error) {
+        return { error: (error as Error).message };
       }
-
-      return { result, views };
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
+    });
   }
 
   /**
@@ -234,16 +332,18 @@ export class AvalonService {
     playerId: PlayerId,
     action: QuestAction,
   ): Promise<{ success: true } | { error: string }> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return { error: '游戏不存在' };
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return { error: '游戏不存在' };
 
-    try {
-      const newState = engineSubmitQuestAction(state, playerId, action);
-      await this.saveGameState(roomCode, newState);
-      return { success: true };
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
+      try {
+        const newState = engineSubmitQuestAction(state, playerId, action);
+        await this.saveGameState(roomCode, newState);
+        return { success: true };
+      } catch (error) {
+        return { error: (error as Error).message };
+      }
+    });
   }
 
   /**
@@ -252,23 +352,25 @@ export class AvalonService {
   async resolveQuest(
     roomCode: string,
   ): Promise<{ result: QuestResult; views: Map<PlayerId, PlayerView> } | { error: string }> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return { error: '游戏不存在' };
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return { error: '游戏不存在' };
 
-    try {
-      const { result, newState } = engineResolveQuest(state);
-      await this.saveGameState(roomCode, newState);
+      try {
+        const { result, newState } = engineResolveQuest(state);
+        await this.saveGameState(roomCode, newState);
 
-      // 获取所有玩家视角
-      const views = new Map<PlayerId, PlayerView>();
-      for (const player of newState.players) {
-        views.set(player.id, getPlayerView(newState, player.id));
+        // 获取所有玩家视角
+        const views = new Map<PlayerId, PlayerView>();
+        for (const player of newState.players) {
+          views.set(player.id, getPlayerView(newState, player.id));
+        }
+
+        return { result, views };
+      } catch (error) {
+        return { error: (error as Error).message };
       }
-
-      return { result, views };
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
+    });
   }
 
   /**
@@ -279,23 +381,25 @@ export class AvalonService {
     assassinId: PlayerId,
     targetPlayerId: PlayerId,
   ): Promise<{ result: GameResult; views: Map<PlayerId, PlayerView> } | { error: string }> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return { error: '游戏不存在' };
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return { error: '游戏不存在' };
 
-    try {
-      const { result, newState } = engineAssassinate(state, assassinId, targetPlayerId);
-      await this.saveGameState(roomCode, newState);
+      try {
+        const { result, newState } = engineAssassinate(state, assassinId, targetPlayerId);
+        await this.saveGameState(roomCode, newState);
 
-      // 获取所有玩家视角
-      const views = new Map<PlayerId, PlayerView>();
-      for (const player of newState.players) {
-        views.set(player.id, getPlayerView(newState, player.id));
+        // 获取所有玩家视角
+        const views = new Map<PlayerId, PlayerView>();
+        for (const player of newState.players) {
+          views.set(player.id, getPlayerView(newState, player.id));
+        }
+
+        return { result, views };
+      } catch (error) {
+        return { error: (error as Error).message };
       }
-
-      return { result, views };
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
+    });
   }
 
   /**
@@ -353,28 +457,32 @@ export class AvalonService {
    * 标记玩家掉线
    */
   async markPlayerOffline(roomCode: string, playerId: PlayerId): Promise<void> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return;
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return;
 
-    const updatedPlayers = state.players.map(p =>
-      p.id === playerId ? { ...p, isConnected: false } : p,
-    );
+      const updatedPlayers = state.players.map(p =>
+        p.id === playerId ? { ...p, isConnected: false } : p,
+      );
 
-    await this.saveGameState(roomCode, { ...state, players: updatedPlayers });
+      await this.saveGameState(roomCode, { ...state, players: updatedPlayers });
+    });
   }
 
   /**
    * 标记玩家上线
    */
   async markPlayerOnline(roomCode: string, playerId: PlayerId): Promise<void> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return;
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return;
 
-    const updatedPlayers = state.players.map(p =>
-      p.id === playerId ? { ...p, isConnected: true } : p,
-    );
+      const updatedPlayers = state.players.map(p =>
+        p.id === playerId ? { ...p, isConnected: true } : p,
+      );
 
-    await this.saveGameState(roomCode, { ...state, players: updatedPlayers });
+      await this.saveGameState(roomCode, { ...state, players: updatedPlayers });
+    });
   }
 }
 

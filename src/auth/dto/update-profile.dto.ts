@@ -1,15 +1,11 @@
 import { IsString, IsNotEmpty, IsOptional, Length, MaxLength, Matches, Validate, ValidationArguments, ValidatorConstraint, ValidatorConstraintInterface } from 'class-validator';
+import { isAllowedAvatarUrl } from '../avatar-url';
 
 @ValidatorConstraint({ name: 'IsAvatarUrl', async: false })
 export class IsAvatarUrlConstraint implements ValidatorConstraintInterface {
   validate(url: string, args: ValidationArguments) {
     if (typeof url !== 'string') return false;
-    if (url === '') return true;
-    if (!url.startsWith('https://')) return false;
-    const prefix = process.env.AVATAR_URL_PREFIX;
-    if (!prefix) return false;
-    if (!url.startsWith(prefix)) return false;
-    return true;
+    return isAllowedAvatarUrl(url, process.env.AVATAR_URL_PREFIX);
   }
   defaultMessage(args: ValidationArguments) {
     return 'avatarUrl must be a valid HTTPS URL starting with AVATAR_URL_PREFIX';

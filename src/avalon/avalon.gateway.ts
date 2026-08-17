@@ -12,7 +12,7 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
-import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters } from '@nestjs/common';
+import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters, OnModuleInit } from '@nestjs/common';
 import { Namespace, Socket } from 'socket.io';
 import { AvalonService } from './avalon.service';
 import { RoomService } from '../room/room.service';
@@ -27,27 +27,28 @@ import {
   SubmitQuestActionDto,
   AssassinateDto,
   GetPlayerViewDto,
+  BeginGameDto,
 } from './dto';
 import { AvalonGameState, PlayerView, TeamVote, QuestAction, PlayerId } from './types';
 import { getPlayerView } from './visibility';
+import { wsCorsOrigin } from '../common/cors-origin';
 
 const WS_RATE_LIMIT_WINDOW_MS = 1000;
 const WS_RATE_LIMIT_MAX = 10;
 
 @WebSocketGateway({
-  cors: { origin: process.env.CORS_ORIGIN || false },
+  cors: { origin: wsCorsOrigin() },
   namespace: '/avalon',
   allowEIO3: true,
 })
 @UseGuards(WsJwtGuard)
 @UseFilters(WsExceptionFilter)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
   server: Namespace;
 
   private readonly logger = new Logger(AvalonGateway.name);
-  private userSocketMap = new Map<string, Set<string>>();
 
   constructor(
     private avalonService: AvalonService,
@@ -55,6 +56,12 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private authService: AuthService,
     private redis: RedisService,
   ) {}
+
+  onModuleInit() {
+    // 把 avalon 游戏初始化器注册进 RoomService（与 RoomEventsNotifier 同模式），
+    // 避免 RoomModule 反向依赖 AvalonModule 造成模块循环依赖。
+    this.roomService.setAvalonGameInitializer(this.avalonService);
+  }
 
   async handleConnection(client: Socket) {
     const auth = (client.handshake.auth ?? {}) as { token?: string };
@@ -87,22 +94,22 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     client.data.userId = userId;
     client.join('user:' + userId);
-
-    const sockets = this.userSocketMap.get(userId) || new Set();
-    sockets.add(client.id);
-    this.userSocketMap.set(userId, sockets);
+    // 连接时还不知道 roomCode，上线标记在 avalon:join 时按房间维度完成
   }
 
   async handleDisconnect(client: Socket) {
-    const userId = client.data.userId;
-    if (!userId) return;
+    // 生命周期钩子不受 WsExceptionFilter 保护，这里兜底捕获避免未处理异常
+    try {
+      const userId = client.data.userId;
+      if (!userId) return;
 
-    const sockets = this.userSocketMap.get(userId);
-    if (sockets) {
-      sockets.delete(client.id);
-      if (sockets.size === 0) {
-        this.userSocketMap.delete(userId);
+      const joinedRooms: string[] = client.data.avalonRooms ?? [];
+      client.data.avalonRooms = [];
+      for (const roomCode of joinedRooms) {
+        await this.detachFromAvalonRoom(client, roomCode, userId);
       }
+    } catch (error) {
+      this.logger.error(`Error handling avalon disconnect for socket ${client.id}:`, error);
     }
   }
 
@@ -113,14 +120,29 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const key = `ws-avalon-rate:${subject}`;
 
     try {
-      const count = await this.redis.incr(key);
-      if (count === 1) {
-        await this.redis.expire(key, Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000));
-      }
+      const count = await this.redis.incrWithExpireIfFirst(
+        key,
+        Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000),
+      );
       return count > WS_RATE_LIMIT_MAX;
     } catch (error) {
       this.logger.error(`Failed to check rate limit for ${subject}`, error);
       return true;
+    }
+  }
+
+  /** 退出 avalon 房间订阅；若该用户没有其他 socket 仍在房间内，则标记离线并广播。 */
+  private async detachFromAvalonRoom(client: Socket, roomCode: string, userId: string): Promise<void> {
+    client.leave(`avalon:${roomCode}`);
+    try {
+      const remaining = await this.server.in(`avalon:${roomCode}`).fetchSockets();
+      if (remaining.some(s => s.id !== client.id && s.data?.userId === userId)) {
+        return;
+      }
+      await this.avalonService.markPlayerOffline(roomCode, userId);
+      await this.broadcastGameState(roomCode);
+    } catch (error) {
+      this.logger.error(`Error detaching user ${userId} from avalon room ${roomCode}:`, error);
     }
   }
 
@@ -141,20 +163,55 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const userId = client.data.userId;
 
-    // 验证玩家是否在房间中
-    const player = await this.roomService.getPlayer(payload.roomCode, userId);
-    if (!player) {
-      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
+    try {
+      // 验证玩家是否在房间中
+      const player = await this.roomService.getPlayer(payload.roomCode, userId);
+      if (!player) {
+        client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
+        return;
+      }
+
+      // 验证玩家是否在本局游戏状态中（否则 getPlayerView 会抛异常）
+      const state = await this.avalonService.getGameState(payload.roomCode);
+      if (!state) {
+        client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '游戏尚未开始' });
+        return;
+      }
+      if (!state.players.some(p => p.id === userId)) {
+        client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '你不在本局游戏中' });
+        return;
+      }
+
+      // 一个 socket 同时只订阅一个 avalon 房间，避免多房间广播串扰
+      const joinedRooms: string[] = client.data.avalonRooms ?? [];
+      for (const code of joinedRooms) {
+        if (code !== payload.roomCode) {
+          await this.detachFromAvalonRoom(client, code, userId);
+        }
+      }
+      client.data.avalonRooms = [payload.roomCode];
+      client.join(`avalon:${payload.roomCode}`);
+
+      // 标记上线并广播，让其他玩家看到 isConnected 恢复
+      await this.avalonService.markPlayerOnline(payload.roomCode, userId);
+
+      // 发送当前游戏状态
+      const view = await this.avalonService.getPlayerView(payload.roomCode, userId);
+      if (view) {
+        client.emit('avalon:state', view);
+      }
+    } catch (error) {
+      this.logger.error(`Error handling avalon:join for user ${userId} room ${payload.roomCode}:`, error);
+      client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '加入游戏失败，请重试' });
       return;
     }
 
-    // 加入 Socket.IO 房间
-    client.join(`avalon:${payload.roomCode}`);
-
-    // 发送当前游戏状态
-    const view = await this.avalonService.getPlayerView(payload.roomCode, userId);
-    if (view) {
-      client.emit('avalon:state', view);
+    // broadcast 失败不应让客户端误以为加入失败：此时客户端已成功加入并收到
+    // 自己的状态视图，广播只是顺带通知其他人。
+    try {
+      await this.broadcastGameState(payload.roomCode);
+    } catch (error) {
+      this.logger.error(`Failed to broadcast game state after join for room ${payload.roomCode}:`, error);
     }
   }
 
@@ -167,8 +224,58 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: GetPlayerViewDto,
   ) {
     const userId = client.data.userId;
-    client.leave(`avalon:${payload.roomCode}`);
+    const joinedRooms: string[] = client.data.avalonRooms ?? [];
+    client.data.avalonRooms = joinedRooms.filter(code => code !== payload.roomCode);
     this.logger.debug(`User ${userId} left game room ${payload.roomCode}`);
+    await this.detachFromAvalonRoom(client, payload.roomCode, userId);
+  }
+
+  /**
+   * 开始任务阶段（房主确认身份已看完，role_reveal → team_building）
+   */
+  @SubscribeMessage('avalon:begin')
+  async handleBegin(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: BeginGameDto,
+  ) {
+    if (await this.isRateLimited(client)) {
+      client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '请求过于频繁' });
+      return;
+    }
+
+    const userId = client.data.userId;
+
+    try {
+      const player = await this.roomService.getPlayer(payload.roomCode, userId);
+      if (!player) {
+        client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
+        return;
+      }
+
+      const result = await this.avalonService.beginGame(payload.roomCode, userId);
+      if ('error' in result) {
+        client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
+        return;
+      }
+
+      // 广播/通知失败不应让客户端误以为操作失败：beginGame 已经成功推进了阶段，
+      // 这里只是把新状态告诉其他玩家，失败仅记日志。
+      try {
+        await this.broadcastGameState(payload.roomCode);
+        this.server.to(`avalon:${payload.roomCode}`).emit('avalon:phase-changed', {
+          phase: result.phase,
+          round: result.round,
+        });
+      } catch (error) {
+        this.logger.error(
+          `Failed to broadcast phase-changed after begin for room ${payload.roomCode}:`,
+          error,
+        );
+      }
+    } catch (error) {
+      this.logger.error(`Error handling avalon:begin for user ${userId} room ${payload.roomCode}:`, error);
+      client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '操作失败，请重试' });
+    }
   }
 
   // ==================== 游戏操作 ====================

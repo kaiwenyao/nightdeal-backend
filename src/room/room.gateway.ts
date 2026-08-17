@@ -1,5 +1,5 @@
 import { WebSocketGateway, WebSocketServer, SubscribeMessage, ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
-import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters } from '@nestjs/common';
+import { UsePipes, ValidationPipe, Logger, UseGuards, UseFilters, OnModuleInit } from '@nestjs/common';
 import { Namespace, Socket } from 'socket.io';
 import { RoomService, RoomInfo, PlayerInfo } from './room.service';
 import { AuthService } from '../auth/auth.service';
@@ -8,25 +8,31 @@ import { WsJwtGuard } from '../common/guards/ws-jwt.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 import { WsErrorCode } from '../common/constants/ws-error-codes';
 import { RedisService } from '../redis/redis.service';
+import { wsCorsOrigin } from '../common/cors-origin';
 
 const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 const WS_RATE_LIMIT_WINDOW_MS = 1000;
 const WS_RATE_LIMIT_MAX = 10;
 
 @WebSocketGateway({
-  cors: { origin: process.env.CORS_ORIGIN || false },
+  cors: { origin: wsCorsOrigin() },
   namespace: '/room',
   allowEIO3: true,
 })
 @UseGuards(WsJwtGuard)
 @UseFilters(WsExceptionFilter)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
   @WebSocketServer()
   server: Namespace;
 
   private readonly logger = new Logger(RoomGateway.name);
-  private userSocketMap = new Map<string, Set<string>>();
+  // Per-instance memory on purpose: a socket's disconnect fires on the instance
+  // that owns the connection, so pending-offline timers only need to live on
+  // that instance. Cross-instance concerns (connection counting, targeted
+  // delivery) go through the Socket.IO adapter instead — every socket joins a
+  // `user:{userId}` room on connect, and `server.to/in('user:' + id)` plus
+  // `fetchSockets()` are routed cluster-wide by the Redis adapter.
   private offlineTimeouts = new Map<string, Map<string, NodeJS.Timeout>>();
 
   constructor(
@@ -34,6 +40,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private authService: AuthService,
     private redis: RedisService,
   ) {}
+
+  onModuleInit() {
+    // Register broadcast callbacks so service-level cleanup (cron) can notify
+    // clients without RoomService depending on the gateway (circular DI).
+    this.roomService.setEventsNotifier(this);
+  }
 
   async handleConnection(client: Socket) {
     const auth = (client.handshake.auth ?? {}) as { token?: string };
@@ -61,10 +73,9 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     client.data.userId = userId;
+    // Every socket joins a per-user room so targeted delivery (kick, role
+    // assignment, eviction) works across instances via the Redis adapter.
     client.join('user:' + userId);
-    const sockets = this.userSocketMap.get(userId) || new Set();
-    sockets.add(client.id);
-    this.userSocketMap.set(userId, sockets);
   }
 
   private async isRateLimited(client: Socket): Promise<boolean> {
@@ -74,10 +85,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const key = `ws-rate:${subject}`;
 
     try {
-      const count = await this.redis.incr(key);
-      if (count === 1) {
-        await this.redis.expire(key, Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000));
-      }
+      const count = await this.redis.incrWithExpireIfFirst(
+        key,
+        Math.ceil(WS_RATE_LIMIT_WINDOW_MS / 1000),
+      );
       return count > WS_RATE_LIMIT_MAX;
     } catch (error) {
       this.logger.error(`Failed to check WebSocket rate limit for ${subject}`, error);
@@ -113,7 +124,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await this.roomService.markPlayerOnline(payload.roomCode, userId);
         await this.broadcastRoomState(payload.roomCode);
         if (room.status === 'PLAYING' && existingPlayer.role) {
-          client.emit('room:started', { yourRole: existingPlayer.role });
+          client.emit('room:started', { yourRole: existingPlayer.role, gameType: room.gameType });
         }
         this.server.to(payload.roomCode).emit('room:reconnected', { userId });
         return;
@@ -121,7 +132,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.broadcastRoomState(payload.roomCode);
       if (room.status === 'PLAYING' && existingPlayer.role) {
-        client.emit('room:started', { yourRole: existingPlayer.role });
+        client.emit('room:started', { yourRole: existingPlayer.role, gameType: room.gameType });
       }
       return;
     }
@@ -174,16 +185,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /**
    * Remove all Socket.IO connections for a user from a room (e.g. HTTP /leave
    * while WebSocket is still connected). Used by handleLeave and RoomController.
+   * Goes through the adapter so it works across instances (Redis adapter).
    */
   evictUserFromRoom(userId: string, roomCode: string): void {
-    const userSockets = this.userSocketMap.get(userId);
-    if (!userSockets) return;
-    for (const socketId of userSockets) {
-      const socket = this.server.sockets.get(socketId);
-      if (socket) {
-        socket.leave(roomCode);
-      }
-    }
+    this.server.in('user:' + userId).socketsLeave(roomCode);
   }
 
   /** After host ends game (WebSocket or HTTP): full room state then room:ended. */
@@ -207,16 +212,20 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.broadcastRoomState(roomCode);
   }
 
-  /** After start succeeds (WebSocket or HTTP): per-player roles + full room state. */
+  /** After start succeeds (WebSocket or HTTP): full room state then per-player roles. */
   async notifyClientsAfterStart(
     roomCode: string,
     assignments: { userId: string; role: string }[],
   ): Promise<void> {
+    const room = await this.broadcastRoomState(roomCode);
+    // room:state must precede room:started so clients can read gameType before navigating.
+    if (!room) return;
     for (const assignment of assignments) {
-      this.server.to('user:' + assignment.userId).emit('room:started', { yourRole: assignment.role });
+      this.server.to('user:' + assignment.userId).emit('room:started', {
+        yourRole: assignment.role,
+        gameType: room.gameType,
+      });
     }
-
-    await this.broadcastRoomState(roomCode);
   }
 
   /**
@@ -224,19 +233,13 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * broadcast player-left + room state to remaining clients.
    */
   async notifyClientsAfterKick(roomCode: string, targetUserId: string): Promise<void> {
-    const targetSocketIds = this.userSocketMap.get(targetUserId);
-    if (targetSocketIds) {
-      for (const targetSocketId of targetSocketIds) {
-        const targetSocket = this.server.sockets.get(targetSocketId);
-        if (targetSocket) {
-          targetSocket.emit('room:error', {
-            code: WsErrorCode.KICKED,
-            message: '你已被房主踢出房间',
-          });
-          targetSocket.leave(roomCode);
-        }
-      }
-    }
+    // Deliver via the per-user room so the Redis adapter routes it to the
+    // target's sockets on ANY instance, then evict them from the room.
+    this.server.to('user:' + targetUserId).emit('room:error', {
+      code: WsErrorCode.KICKED,
+      message: '你已被房主踢出房间',
+    });
+    this.server.in('user:' + targetUserId).socketsLeave(roomCode);
 
     const playerCount = await this.roomService.getPlayerCount(roomCode);
     this.server.to(roomCode).emit('room:player-left', {
@@ -244,6 +247,23 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       playerCount,
     });
 
+    await this.broadcastRoomState(roomCode);
+  }
+
+  /** After a leave/cleanup removal: optionally evict sockets, then player-left + full room state. */
+  async notifyClientsAfterLeave(
+    roomCode: string,
+    userId: string,
+    opts?: { evict?: boolean },
+  ): Promise<void> {
+    if (opts?.evict !== false) {
+      this.evictUserFromRoom(userId, roomCode);
+    }
+    const playerCount = await this.roomService.getPlayerCount(roomCode);
+    this.server.to(roomCode).emit('room:player-left', {
+      userId,
+      playerCount,
+    });
     await this.broadcastRoomState(roomCode);
   }
 
@@ -257,18 +277,18 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     const userId = client.data.userId;
+
+    // Membership check: without it any authenticated user could send
+    // room:leave for an arbitrary room code and trigger broadcasts.
+    const player = await this.roomService.getPlayer(payload.roomCode, userId);
+    if (!player) {
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '你不在该房间中' });
+      return;
+    }
+
     await this.roomService.leaveRoom(payload.roomCode, userId);
 
-    this.evictUserFromRoom(userId, payload.roomCode);
-
-    // Emit player-left event to all remaining clients in the room
-    const playerCount = await this.roomService.getPlayerCount(payload.roomCode);
-    this.server.to(payload.roomCode).emit('room:player-left', {
-      userId,
-      playerCount,
-    });
-
-    await this.broadcastRoomState(payload.roomCode);
+    await this.notifyClientsAfterLeave(payload.roomCode, userId);
   }
 
   @SubscribeMessage('room:kick')
@@ -388,56 +408,57 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleDisconnect(client: Socket) {
-    const userId = client.data.userId;
-    if (!userId) return;
+    // Lifecycle hooks are NOT covered by WsExceptionFilter — a DB/Redis hiccup
+    // here would surface as an unhandled rejection, so catch everything.
+    try {
+      const userId = client.data.userId;
+      if (!userId) return;
 
-    const sockets = this.userSocketMap.get(userId);
-    if (sockets) {
-      sockets.delete(client.id);
-      if (sockets.size === 0) {
-        this.userSocketMap.delete(userId);
+      // Global connection count via the adapter (fetchSockets fans out across
+      // instances under the Redis adapter). The disconnecting socket has
+      // already left all rooms when 'disconnect' fires. Only mark offline and
+      // schedule cleanup when ALL devices are disconnected.
+      const remaining = await this.server.in('user:' + userId).fetchSockets();
+      if (remaining.length > 0) return;
 
-        // Only mark offline and schedule cleanup when ALL devices are disconnected
-        const rooms = await this.roomService.getUserRooms(userId);
+      const rooms = await this.roomService.getUserRooms(userId);
 
-        for (const roomCode of rooms) {
-          await this.roomService.markPlayerOffline(roomCode, userId);
-          this.server.to(roomCode).emit('room:offline', { userId });
+      for (const roomCode of rooms) {
+        await this.roomService.markPlayerOffline(roomCode, userId);
+        this.server.to(roomCode).emit('room:offline', { userId });
+        // Propagate a possible in-game host transfer triggered by markPlayerOffline.
+        await this.broadcastRoomState(roomCode);
 
-          const timeout = setTimeout(async () => {
-            try {
-              this.clearOfflineTimeout(userId, roomCode);
-              // Re-check: if the player reconnected and the offline marker was
-              // cleared by handleJoin(), skip cleanup to avoid a race condition.
-              const stillOffline = await this.roomService.isPlayerOffline(roomCode, userId);
-              if (!stillOffline) {
-                return;
-              }
-              const room = await this.roomService.getRoom(roomCode);
-              if (room && room.status === 'PLAYING') {
-                return;
-              }
-              // Re-check once more before the destructive leaveRoom():
-              // the player may have reconnected while getRoom() was awaited.
-              const stillOfflineBeforeLeave = await this.roomService.isPlayerOffline(roomCode, userId);
-              if (!stillOfflineBeforeLeave) {
-                return;
-              }
-              await this.roomService.leaveRoom(roomCode, userId);
-              const playerCount = await this.roomService.getPlayerCount(roomCode);
-              this.server.to(roomCode).emit('room:player-left', {
-                userId,
-                playerCount,
-              });
-              await this.broadcastRoomState(roomCode);
-            } catch (error) {
-              this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
+        const timeout = setTimeout(async () => {
+          try {
+            this.clearOfflineTimeout(userId, roomCode);
+            // Re-check: if the player reconnected and the offline marker was
+            // cleared by handleJoin(), skip cleanup to avoid a race condition.
+            const stillOffline = await this.roomService.isPlayerOffline(roomCode, userId);
+            if (!stillOffline) {
+              return;
             }
-          }, OFFLINE_TIMEOUT_MS);
+            const room = await this.roomService.getRoom(roomCode);
+            if (room && room.status === 'PLAYING') {
+              return;
+            }
+            // Re-check once more before the destructive leaveRoom():
+            // the player may have reconnected while getRoom() was awaited.
+            const stillOfflineBeforeLeave = await this.roomService.isPlayerOffline(roomCode, userId);
+            if (!stillOfflineBeforeLeave) {
+              return;
+            }
+            await this.roomService.leaveRoom(roomCode, userId);
+            await this.notifyClientsAfterLeave(roomCode, userId, { evict: false });
+          } catch (error) {
+            this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
+          }
+        }, OFFLINE_TIMEOUT_MS);
 
-          this.setOfflineTimeout(userId, roomCode, timeout);
-        }
+        this.setOfflineTimeout(userId, roomCode, timeout);
       }
+    } catch (error) {
+      this.logger.error(`Error handling disconnect for socket ${client.id}:`, error);
     }
   }
 
@@ -463,11 +484,11 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  async broadcastRoomState(roomCode: string): Promise<void> {
+  async broadcastRoomState(roomCode: string): Promise<RoomInfo | null> {
     const room = await this.roomService.getRoom(roomCode);
     if (!room) {
       this.logger.warn(`Cannot broadcast room state: room ${roomCode} not found`);
-      return;
+      return null;
     }
     const players = await this.roomService.getPlayers(roomCode);
     // Strip role from players before broadcasting — roles are delivered
@@ -477,5 +498,6 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const socketCount = roomSockets ? roomSockets.size : 0;
     this.logger.debug(`Broadcasting room:state to ${socketCount} clients in room ${roomCode}`);
     this.server.to(roomCode).emit('room:state', { room, players: safePlayers });
+    return room;
   }
 }

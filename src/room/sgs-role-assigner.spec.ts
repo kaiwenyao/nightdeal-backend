@@ -85,6 +85,74 @@ describe('SgsRoleAssigner', () => {
       expect(result.filter(r => r.role === '反贼')).toHaveLength(2);
     });
 
+    it('should pair seats 1&4 and seats 2&3 in the same team for 4 players', () => {
+      const players = [
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 2, userId: 'user2' },
+        { seatNo: 3, userId: 'user3' },
+        { seatNo: 4, userId: 'user4' },
+      ];
+
+      const result = assignSgsRoles(players);
+      const seat = (seatNo: number) => result.find(r => r.seatNo === seatNo)!;
+
+      expect(seat(1).team).toBe(seat(4).team);
+      expect(seat(2).team).toBe(seat(3).team);
+      expect(seat(1).team).not.toBe(seat(2).team);
+    });
+
+    it('should randomly choose which team sits at seats 1&4 for 4 players', () => {
+      const players = [
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 2, userId: 'user2' },
+        { seatNo: 3, userId: 'user3' },
+        { seatNo: 4, userId: 'user4' },
+      ];
+
+      const teamsAtSeats14 = new Set<string>();
+      for (let i = 0; i < 100; i++) {
+        const result = assignSgsRoles(players);
+        const seat1 = result.find(r => r.seatNo === 1)!;
+        teamsAtSeats14.add(seat1.team);
+      }
+
+      expect(teamsAtSeats14.size).toBe(2);
+    });
+
+    it('should pair seats based on seat numbers even when input order is shuffled', () => {
+      const players = [
+        { seatNo: 4, userId: 'user4' },
+        { seatNo: 2, userId: 'user2' },
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 3, userId: 'user3' },
+      ];
+
+      const result = assignSgsRoles(players);
+      const seat = (seatNo: number) => result.find(r => r.seatNo === seatNo)!;
+
+      expect(seat(1).team).toBe(seat(4).team);
+      expect(seat(2).team).toBe(seat(3).team);
+      expect(seat(1).team).not.toBe(seat(2).team);
+    });
+
+    it('should fall back to random assignment for a non-pairing 4-player config', () => {
+      const players = [
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 2, userId: 'user2' },
+        { seatNo: 3, userId: 'user3' },
+        { seatNo: 4, userId: 'user4' },
+      ];
+      const customConfig = { monarch: 1, loyalist: 1, rebel: 2, traitor: 0 };
+
+      const results = new Set<string>();
+      for (let i = 0; i < 100; i++) {
+        const result = assignSgsRoles(players, customConfig);
+        results.add(result.map(r => r.role).join(','));
+      }
+
+      expect(results.size).toBeGreaterThan(1);
+    });
+
     it('should assign roles correctly for 5 players', () => {
       const players = [
         { seatNo: 1, userId: 'user1' },
