@@ -9,6 +9,12 @@ import { GameType } from '../../prisma/generated/prisma/client.js';
 describe('RoomService', () => {
   let service: RoomService;
 
+  const offlineMarker = (
+    playerId: string,
+    presenceVersion = 0,
+    disconnectedAt = 1,
+  ) => JSON.stringify({ playerId, presenceVersion, disconnectedAt });
+
   const mockPrisma = {
     room: {
       create: jest.fn(),
@@ -425,12 +431,12 @@ describe('RoomService', () => {
 
     it('deletes the room player and clears the offline marker', async () => {
       mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
-      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'player-1', presenceVersion: 0 });
 
       await service.leaveRoom('ABCDEF', 'user-1');
 
       expect(mockPrisma.roomPlayer.deleteMany).toHaveBeenCalledWith({
-        where: { roomId: 'room-1', userId: 'user-1', presenceVersion: 0 },
+        where: { id: 'player-1', roomId: 'room-1', userId: 'user-1', presenceVersion: 0 },
       });
       expect(mockRedis.delWithLock).toHaveBeenCalledWith(
         expect.objectContaining({ key: 'lock:room:ABCDEF:presence' }),
@@ -439,16 +445,39 @@ describe('RoomService', () => {
       expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith('room:ABCDEF', 'playerCount', expect.anything(), expect.anything());
     });
 
+    it('ignores an old marker after leave cleanup fails and membership is recreated', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.roomPlayer.findFirst
+        .mockResolvedValueOnce({ id: 'old-player', presenceVersion: 0 });
+      mockRedis.delWithLock.mockRejectedValueOnce(new Error('LOCK_LOST'));
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await expect(service.leaveRoom('ABCDEF', 'user-1')).resolves.toBe('removed');
+
+      mockRedis.get.mockResolvedValue(offlineMarker('old-player'));
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'new-player', presenceVersion: 0 });
+      await expect(service.isPlayerOffline('ABCDEF', 'user-1')).resolves.toBe(false);
+      await expect(service.cleanupOfflinePlayer('ABCDEF', 'user-1')).resolves.toBe('skipped');
+      loggerSpy.mockRestore();
+    });
+
     it('transfers host to an online member when the host leaves', async () => {
       mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
-      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
+      mockPrisma.roomPlayer.findFirst.mockImplementation(async ({ where }: any) => {
+        const ids: Record<string, string> = {
+          'host-1': 'p-host',
+          'u-offline': 'p-2',
+          'u-online': 'p-3',
+        };
+        return { id: ids[where.userId] ?? 'p-3', presenceVersion: 0 };
+      });
       mockPrisma.roomPlayer.findMany.mockResolvedValue([
         { id: 'p-2', roomId: 'room-1', userId: 'u-offline', seatNo: 2 },
         { id: 'p-3', roomId: 'room-1', userId: 'u-online', seatNo: 3 },
       ]);
       // u-offline has an offline marker; u-online does not
       mockRedis.get.mockImplementation(async (key: string) =>
-        key.endsWith(':u-offline') ? '1' : null,
+        key.endsWith(':u-offline') ? offlineMarker('p-2') : null,
       );
 
       await service.leaveRoom('ABCDEF', 'host-1');
@@ -464,7 +493,7 @@ describe('RoomService', () => {
       // WAITING→PLAYING (roles persisted) before we took the row lock, so the
       // status-guarded update inside the transaction matches nothing.
       mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
-      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'p-host', presenceVersion: 1 });
       // Once only: mockResolvedValue would leak into later tests, since the
       // suite uses clearAllMocks (calls) and not resetAllMocks (implementations).
       mockPrisma.room.updateMany.mockResolvedValueOnce({ count: 0 });
@@ -526,6 +555,28 @@ describe('RoomService', () => {
         'game-1',
       );
       expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith('room:ABCDEF', 'status', expect.anything(), expect.anything());
+    });
+
+    it('returns success when post-commit Avalon cleanup lock is unavailable', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue(mockPlayingRoom);
+      mockRedis.withLock.mockImplementation(async (key: string, _ttl: number, fn: (lease: unknown) => Promise<unknown>) => {
+        if (key.startsWith('lock:avalon:')) throw new Error('LOCK_BUSY');
+        return fn({ key, token: 'test-token' });
+      });
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      const result = await service.endGame('ABCDEF', 'host-1');
+
+      expect(result).toEqual({ success: true });
+      expect(mockPrisma.roomPlayer.updateMany).toHaveBeenCalledWith({
+        where: { roomId: 'room-1' },
+        data: { role: null },
+      });
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining('post-commit Avalon cleanup'),
+        expect.any(Error),
+      );
+      loggerSpy.mockRestore();
     });
 
     it('does not reset a successor game when the captured generation is already ended', async () => {
@@ -1125,6 +1176,7 @@ describe('RoomService', () => {
 
     it('stores the offline marker WITHOUT a TTL', async () => {
       mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'p-u-1', presenceVersion: 1 });
 
       await service.markPlayerOffline('ABCDEF', 'u-1');
 
@@ -1144,10 +1196,15 @@ describe('RoomService', () => {
       ]);
       // u-2 is also offline → the online u-3 must become host
       mockRedis.get.mockImplementation(async (key: string) =>
-        key.endsWith(':u-2') ? '1' : null,
+        key.endsWith(':u-2') ? offlineMarker('p-2') : null,
       );
-      mockPrisma.roomPlayer.findFirst.mockResolvedValue({
-        id: 'p-3', roomId: 'room-1', userId: 'u-3', seatNo: 3,
+      mockPrisma.roomPlayer.findFirst.mockImplementation(async ({ where }: any) => {
+        const player = {
+          'host-1': { id: 'p-1', presenceVersion: 1 },
+          'u-2': { id: 'p-2', presenceVersion: 0 },
+          'u-3': { id: 'p-3', presenceVersion: 0 },
+        } as Record<string, { id: string; presenceVersion: number }>;
+        return player[where.userId] ?? player['u-3'];
       });
       const updateHost = jest.fn().mockResolvedValue(undefined);
       service.setAvalonGameInitializer({ initializeGame: jest.fn(), updateHost });
@@ -1163,18 +1220,18 @@ describe('RoomService', () => {
 
     it('serializes simultaneous disconnects and leaves an online player as host', async () => {
       let currentHost = 'host-1';
-      const offline = new Set<string>();
+      const offline = new Map<string, string>();
       let queue = Promise.resolve<unknown>(undefined);
       mockRedis.withLock.mockImplementation((key: string, _ttl: number, fn: (lease: unknown) => Promise<unknown>) => {
         const run = queue.then(() => fn({ key, token: 'test-token' }));
         queue = run.catch(() => undefined);
         return run;
       });
-      mockRedis.setWithLock.mockImplementation(async (_lease: unknown, key: string) => {
-        offline.add(key.split(':').pop()!);
+      mockRedis.setWithLock.mockImplementation(async (_lease: unknown, key: string, value: string) => {
+        offline.set(key.split(':').pop()!, value);
       });
       mockRedis.get.mockImplementation(async (key: string) =>
-        offline.has(key.split(':').pop()!) ? '1' : null,
+        offline.get(key.split(':').pop()!) ?? null,
       );
       mockPrisma.room.findUnique.mockImplementation(async () => ({
         ...waitingRoom,
@@ -1187,9 +1244,10 @@ describe('RoomService', () => {
         { id: 'p-3', roomId: 'room-1', userId: 'u-3', seatNo: 3, role: 'LoyalServant', joinedAt: new Date(), user: { id: 'u-3', nickName: 'b', avatarUrl: '' } },
       ]);
       mockPrisma.roomPlayer.findFirst.mockImplementation(async ({ where }: any) => ({
-        id: `p-${where.userId}`,
+        id: where.userId === 'host-1' ? 'p-1' : where.userId === 'u-2' ? 'p-2' : 'p-3',
         roomId: 'room-1',
         userId: where.userId,
+        presenceVersion: where.userId === 'host-1' || where.userId === 'u-2' ? 1 : 0,
         seatNo: where.userId === 'u-2' ? 2 : 3,
       }));
       mockPrisma.room.updateMany.mockImplementation(async ({ where, data }: any) => {
@@ -1213,6 +1271,7 @@ describe('RoomService', () => {
 
     it('does not transfer host in a WAITING room', async () => {
       mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'p-1', presenceVersion: 1 });
 
       await service.markPlayerOffline('ABCDEF', 'host-1');
 
@@ -1248,11 +1307,12 @@ describe('RoomService', () => {
       mockPrisma.room.findMany.mockResolvedValue([staleRoom]);
       mockPrisma.room.findUnique.mockResolvedValue({ updatedAt });
       mockPrisma.roomPlayer.findMany.mockResolvedValue([{ userId: 'u-1' }]);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'p-1', presenceVersion: 0 });
       mockPrisma.room.deleteMany.mockResolvedValue({ count: 1 });
       mockRedis.get.mockImplementation(async (key: string) =>
         key.startsWith('avalon:')
           ? JSON.stringify({ generationId: 'game-1' })
-          : '1',
+          : offlineMarker('p-1'),
       );
       mockRedis.hget.mockResolvedValue(null);
       mockRedis.del.mockRejectedValueOnce(new Error('redis down'));
@@ -1279,15 +1339,15 @@ describe('RoomService', () => {
         createdAt: new Date(), updatedAt: new Date(),
       };
       mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
-      mockRedis.get.mockResolvedValue('1');
-      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 7 });
+      mockRedis.get.mockResolvedValue(offlineMarker('p-1', 7));
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'p-1', presenceVersion: 7 });
       mockPrisma.roomPlayer.deleteMany.mockResolvedValue({ count: 0 });
 
       const result = await service.cleanupOfflinePlayer('ABCDEF', 'u-1');
 
       expect(result).toBe('not_found');
       expect(mockPrisma.roomPlayer.deleteMany).toHaveBeenCalledWith({
-        where: { roomId: 'room-1', userId: 'u-1', presenceVersion: 7 },
+        where: { id: 'p-1', roomId: 'room-1', userId: 'u-1', presenceVersion: 7 },
       });
       expect(mockRedis.delWithLock).not.toHaveBeenCalled();
     });
@@ -1311,8 +1371,8 @@ describe('RoomService', () => {
       mockPrisma.roomPlayer.findMany.mockResolvedValue([
         { id: 'p-1', roomId: 'room-1', userId: 'u-1', seatNo: 1, role: null, joinedAt: new Date(), user: { id: 'u-1', nickName: 'a', avatarUrl: '' } },
       ]);
-      mockRedis.get.mockResolvedValue('1'); // everyone offline long past the grace period
-      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
+      mockRedis.get.mockResolvedValue(offlineMarker('p-1'));
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'p-1', presenceVersion: 0 });
       const notifier = { notifyClientsAfterLeave: jest.fn().mockResolvedValue(undefined) };
       service.setEventsNotifier(notifier);
 
@@ -1331,7 +1391,8 @@ describe('RoomService', () => {
       mockPrisma.roomPlayer.findMany.mockResolvedValue([
         { id: 'p-1', roomId: 'room-1', userId: 'u-1', seatNo: 1, role: null, joinedAt: new Date(), user: { id: 'u-1', nickName: 'a', avatarUrl: '' } },
       ]);
-      mockRedis.get.mockResolvedValue(Date.now().toString());
+      mockRedis.get.mockResolvedValue(offlineMarker('p-1', 0, Date.now()));
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ id: 'p-1', presenceVersion: 0 });
       const notifier = { notifyClientsAfterLeave: jest.fn() };
       service.setEventsNotifier(notifier as never);
 
