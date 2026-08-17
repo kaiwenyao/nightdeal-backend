@@ -38,6 +38,7 @@ describe('RoomService', () => {
 
   const mockRedis = {
     hset: jest.fn().mockResolvedValue(undefined),
+    hsetWithExpire: jest.fn().mockResolvedValue(undefined),
     hget: jest.fn().mockResolvedValue(null),
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue(undefined),
@@ -99,11 +100,18 @@ describe('RoomService', () => {
           seatNo: 1,
         },
       });
-      expect(mockRedis.hset).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 'lastActiveAt', expect.any(String));
-      expect(mockRedis.hset).not.toHaveBeenCalledWith(expect.anything(), 'status', expect.anything());
-      expect(mockRedis.hset).not.toHaveBeenCalledWith(expect.anything(), 'hostId', expect.anything());
-      expect(mockRedis.hset).not.toHaveBeenCalledWith(expect.anything(), 'playerCount', expect.anything());
-      expect(mockRedis.expire).toHaveBeenCalledWith(expect.stringMatching(/^room:[A-Z]{6}$/), 86400);
+      // lastActiveAt is written together with the TTL, so an expired hash can
+      // never be resurrected without an expiry.
+      expect(mockRedis.hsetWithExpire).toHaveBeenCalledWith(
+        expect.stringMatching(/^room:[A-Z]{6}$/),
+        'lastActiveAt',
+        expect.any(String),
+        86400,
+      );
+      expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith(expect.anything(), 'status', expect.anything(), expect.anything());
+      expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith(expect.anything(), 'hostId', expect.anything(), expect.anything());
+      expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith(expect.anything(), 'playerCount', expect.anything(), expect.anything());
+      expect(mockRedis.hset).not.toHaveBeenCalled();
     });
 
     it('rejects Avalon when maxPlayers below minimum', async () => {
@@ -400,7 +408,7 @@ describe('RoomService', () => {
         where: { roomId: 'room-1', userId: 'user-1' },
       });
       expect(mockRedis.del).toHaveBeenCalledWith('room:ABCDEF:offline:user-1');
-      expect(mockRedis.hset).not.toHaveBeenCalledWith('room:ABCDEF', 'playerCount', expect.anything());
+      expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith('room:ABCDEF', 'playerCount', expect.anything(), expect.anything());
     });
 
     it('transfers host to an online member when the host leaves', async () => {
@@ -420,6 +428,31 @@ describe('RoomService', () => {
         where: { id: 'room-1' },
         data: { hostId: 'u-online', updatedAt: expect.any(Date) },
       });
+    });
+
+    it('marks the host offline instead of deleting when the room started mid-leave', async () => {
+      // Arrange: getRoom() saw WAITING, but a concurrent startGame committed
+      // WAITING→PLAYING (roles persisted) before we took the row lock, so the
+      // status-guarded update inside the transaction matches nothing.
+      mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      // Once only: mockResolvedValue would leak into later tests, since the
+      // suite uses clearAllMocks (calls) and not resetAllMocks (implementations).
+      mockPrisma.room.updateMany.mockResolvedValueOnce({ count: 0 });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue([
+        { id: 'p-2', roomId: 'room-1', userId: 'u-2', seatNo: 2 },
+      ]);
+
+      // Act
+      await service.leaveRoom('ABCDEF', 'host-1');
+
+      // Assert: the host's row (and its persisted role) survives, and the
+      // player is only marked offline — same as the PLAYING path.
+      expect(mockPrisma.roomPlayer.deleteMany).not.toHaveBeenCalled();
+      expect(mockPrisma.room.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ hostId: expect.anything() }) }),
+      );
+      expect(mockPrisma.room.delete).not.toHaveBeenCalled();
+      expect(mockRedis.set).toHaveBeenCalledWith('room:ABCDEF:offline:host-1', expect.any(String));
     });
   });
 
@@ -453,7 +486,7 @@ describe('RoomService', () => {
         data: { status: 'WAITING' },
       });
       expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
-      expect(mockRedis.hset).not.toHaveBeenCalledWith('room:ABCDEF', 'status', expect.anything());
+      expect(mockRedis.hsetWithExpire).not.toHaveBeenCalledWith('room:ABCDEF', 'status', expect.anything(), expect.anything());
     });
 
     it('non-existent room → returns error', async () => {
@@ -639,6 +672,82 @@ describe('RoomService', () => {
       });
       expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
     });
+
+    it('rejects an Avalon config whose loyal/minion split is not what the engine deals', async () => {
+      // Arrange: 8 players, merlin + assassin + 6 loyal servants + 0 minions.
+      // The counts add up to 8, but the engine fills factions from
+      // FACTION_COUNTS (5 good / 3 evil), so this config would silently deal a
+      // different game than the host configured.
+      mockPrisma.room.findUnique.mockResolvedValue({
+        ...sgsRoom,
+        gameType: GameType.AVALON,
+        maxPlayers: 8,
+        roleConfig: {
+          merlin: true,
+          percival: false,
+          mordred: false,
+          morgana: false,
+          oberon: false,
+          assassin: true,
+          loyalServants: 6,
+          minions: 0,
+        },
+      });
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(buildPlayers(8));
+
+      // Act
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      // Assert
+      expect(result).toEqual({
+        error: '角色配置与 8 人局不匹配：忠臣应为 4 人、爪牙应为 2 人',
+      });
+      expect(mockPrisma.gameRecord.create).not.toHaveBeenCalled();
+    });
+
+    it('initializes Avalon state with the config read inside the transaction', async () => {
+      // Arrange: the pre-transaction snapshot still has the old 4-special-role
+      // config; updateRoomSettings committed a merlin+assassin config before the
+      // status flip took the room row lock.
+      const staleRoom = {
+        ...sgsRoom,
+        gameType: GameType.AVALON,
+        roleConfig: {
+          merlin: true, percival: true, mordred: false, morgana: true,
+          oberon: false, assassin: true, loyalServants: 1, minions: 0,
+        },
+      };
+      const freshRoom = {
+        ...staleRoom,
+        roleConfig: {
+          merlin: true, percival: false, mordred: false, morgana: false,
+          oberon: false, assassin: true, loyalServants: 2, minions: 1,
+        },
+      };
+      const players = buildPlayers(5);
+      mockPrisma.room.findUnique
+        .mockResolvedValueOnce(staleRoom)   // getRoom() before the transaction
+        .mockResolvedValue(freshRoom);      // inside the transaction and after
+      mockPrisma.roomPlayer.findMany.mockResolvedValue(players);
+      mockPrisma.gameRecord.create.mockResolvedValue({});
+      const initializeGame = jest.fn().mockResolvedValue(undefined);
+      service.setAvalonGameInitializer({ initializeGame });
+
+      // Act
+      const result = await service.startGame('ABCDEF', 'host-1');
+
+      // Assert: the game state advertises exactly the roles that were dealt.
+      expect(result).toHaveProperty('assignments');
+      const config = initializeGame.mock.calls[0][2];
+      expect(config.roles).toEqual(['Merlin', 'Assassin']);
+      if ('assignments' in result) {
+        const dealtSpecials = result.assignments
+          .map((a) => a.role)
+          .filter((role) => role !== 'LoyalServant' && role !== 'Minion')
+          .sort();
+        expect(dealtSpecials).toEqual(['Assassin', 'Merlin']);
+      }
+    });
   });
 
   describe('joinRoom status guards', () => {
@@ -705,10 +814,13 @@ describe('RoomService', () => {
       updatedAt: new Date(),
     };
 
-    function buildTx(playerCount: number) {
+    function buildTx(playerCount: number, maxPlayers = waitingRoom.maxPlayers) {
       return {
         room: {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          // Capacity is read inside the transaction, so the tx client must
+          // answer it — the pre-transaction snapshot may be stale.
+          findUnique: jest.fn().mockResolvedValue({ maxPlayers }),
         },
         roomPlayer: {
           count: jest.fn().mockResolvedValue(playerCount),
@@ -760,6 +872,22 @@ describe('RoomService', () => {
       expect(tx.roomPlayer.create).not.toHaveBeenCalled();
     });
 
+    it('rejects when maxPlayers was lowered after the pre-transaction room read', async () => {
+      // Arrange: getRoom() sees maxPlayers 5, but updateRoomSettings committed
+      // a lower limit before we took the room row lock.
+      const tx = buildTx(3, 3);
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(tx));
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue(null);
+
+      // Act
+      const result = await service.joinRoom('ABCDEF', 'u-new');
+
+      // Assert: the fresh limit wins, so the room is not overfilled.
+      expect(result).toEqual({ error: '房间已满' });
+      expect(tx.roomPlayer.create).not.toHaveBeenCalled();
+    });
+
     it('two concurrent joins cannot both pass the capacity check', async () => {
       // Simulates the room row lock: transactions are serialized and each one
       // observes the other one's committed player rows.
@@ -775,7 +903,10 @@ describe('RoomService', () => {
       mockPrisma.$transaction.mockImplementation(async (cb: any) => {
         const release = await acquireLock();
         const tx = {
-          room: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+          room: {
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            findUnique: jest.fn().mockResolvedValue({ maxPlayers: 5 }),
+          },
           roomPlayer: {
             count: jest.fn().mockImplementation(async () => committedPlayers),
             findFirst: jest.fn().mockResolvedValue(null),

@@ -216,14 +216,19 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   async notifyClientsAfterStart(
     roomCode: string,
     assignments: { userId: string; role: string }[],
+    fallbackGameType?: RoomInfo['gameType'],
   ): Promise<void> {
     const room = await this.broadcastRoomState(roomCode);
-    // room:state must precede room:started so clients can read gameType before navigating.
-    if (!room) return;
+    // room:state must precede room:started so clients can read gameType before
+    // navigating. The start is already committed here, so roles must go out even
+    // if the state broadcast failed (transient DB error) — otherwise nobody
+    // learns their role and the room is stuck in PLAYING. gameType then falls
+    // back to the value startGame read inside its transaction.
+    const gameType = room?.gameType ?? fallbackGameType;
     for (const assignment of assignments) {
       this.server.to('user:' + assignment.userId).emit('room:started', {
         yourRole: assignment.role,
-        gameType: room.gameType,
+        gameType,
       });
     }
   }
@@ -332,7 +337,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       return;
     }
 
-    await this.notifyClientsAfterStart(payload.roomCode, result.assignments);
+    await this.notifyClientsAfterStart(payload.roomCode, result.assignments, result.gameType);
   }
 
   @SubscribeMessage('room:end')

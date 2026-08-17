@@ -21,7 +21,9 @@ import {
   AvalonRole,
   AvalonGameConfig,
   DEFAULT_AVALON_CONFIG,
+  FACTION_COUNTS,
 } from '../avalon/types';
+import { ROOM_HASH_TTL_SECONDS } from './room.constants';
 import { customAlphabet } from 'nanoid';
 
 const generateRoomCode = customAlphabet('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6);
@@ -40,6 +42,49 @@ function buildAvalonGameConfig(roleConfig: RoleConfig): AvalonGameConfig {
   if (roleConfig.oberon) roles.push('Oberon');
   if (roleConfig.assassin) roles.push('Assassin');
   return { ...DEFAULT_AVALON_CONFIG, roles };
+}
+
+/**
+ * 校验房间的 Avalon 角色配置是否和该人数局真正会发出的牌一致。
+ *
+ * 引擎只认 {@link buildAvalonGameConfig} 传过去的特殊角色，忠臣/爪牙数量由
+ * FACTION_COUNTS 自动补足；所以只把 loyalServants + minions 加起来对总人数
+ * 是校验不到东西的——8 人配 6 忠臣 0 爪牙同样能凑够 8，引擎却按 5 好 3 坏发牌，
+ * 房主看到的和实际开的是两局不同的游戏。这里直接按阵营人数校验。
+ *
+ * @returns 错误信息；配置合法时返回 null
+ */
+function validateAvalonRoleConfig(
+  roleConfig: RoleConfig,
+  playerCount: number,
+): string | null {
+  const factionCount = FACTION_COUNTS[playerCount];
+  if (!factionCount) {
+    return `不支持 ${playerCount} 人游戏`;
+  }
+
+  const goodSpecials = (roleConfig.merlin ? 1 : 0) + (roleConfig.percival ? 1 : 0);
+  const evilSpecials = (roleConfig.mordred ? 1 : 0) + (roleConfig.morgana ? 1 : 0)
+    + (roleConfig.oberon ? 1 : 0) + (roleConfig.assassin ? 1 : 0);
+
+  if (goodSpecials > factionCount.good) {
+    return `好人角色数量(${goodSpecials})超过好人数量(${factionCount.good})`;
+  }
+  if (evilSpecials > factionCount.evil) {
+    return `邪恶角色数量(${evilSpecials})超过邪恶数量(${factionCount.evil})`;
+  }
+
+  const expectedLoyalServants = factionCount.good - goodSpecials;
+  const expectedMinions = factionCount.evil - evilSpecials;
+  if (
+    roleConfig.loyalServants !== expectedLoyalServants
+    || roleConfig.minions !== expectedMinions
+  ) {
+    return `角色配置与 ${playerCount} 人局不匹配：忠臣应为 ${expectedLoyalServants} 人、`
+      + `爪牙应为 ${expectedMinions} 人`;
+  }
+
+  return null;
 }
 
 interface RoomBaseInfo {
@@ -75,6 +120,19 @@ export interface JoinResult {
 
 export interface StartResult {
   assignments: RoleAssignment[];
+  /** 事务内读到的游戏类型，供调用方在房间状态读取失败时兜底。 */
+  gameType: GameType;
+}
+
+/** {@link RoomService.computeRoleAssignments} 的结果。 */
+interface RoleComputation {
+  assignments: RoleAssignment[];
+  /**
+   * 仅 Avalon：与本次角色分配同源的引擎配置。
+   * 事务提交后初始化 Redis 游戏状态时必须复用它，
+   * 否则用房间快照重新构建会和实际发出的角色不一致。
+   */
+  avalonConfig?: AvalonGameConfig;
 }
 
 /**
@@ -288,9 +346,14 @@ export class RoomService {
     // Only lastActiveAt is ever read from this hash (idle-room cleanup);
     // status/hostId/playerCount/maxPlayers mirrors were write-only and have
     // been removed to eliminate stale-data footguns.
-    await this.redis.hset(`room:${code}`, 'lastActiveAt', Date.now().toString());
-    // Set 24h TTL on room hash to prevent stale Redis keys
-    await this.redis.expire(`room:${code}`, 86400);
+    // The TTL goes on with every write (see hsetWithExpire): a bare hset would
+    // resurrect an expired hash without any expiry.
+    await this.redis.hsetWithExpire(
+      `room:${code}`,
+      'lastActiveAt',
+      Date.now().toString(),
+      ROOM_HASH_TTL_SECONDS,
+    );
 
     if (isSgs) {
       return {
@@ -328,10 +391,22 @@ export class RoomService {
         return { error: '房间不存在或游戏已开始' };
       }
 
+      // Re-read maxPlayers INSIDE the transaction, now that we hold the room
+      // row lock: the getRoom() snapshot above may be stale if a concurrent
+      // updateRoomSettings lowered the limit, and admitting a player against
+      // a limit that no longer exists would overfill the room.
+      const currentRoom = await tx.room.findUnique({
+        where: { id: room.id },
+        select: { maxPlayers: true },
+      });
+      if (!currentRoom) {
+        return { error: '房间不存在' };
+      }
+
       const currentPlayerCount = await tx.roomPlayer.count({
         where: { roomId: room.id },
       });
-      if (currentPlayerCount >= room.maxPlayers) {
+      if (currentPlayerCount >= currentRoom.maxPlayers) {
         return { error: '房间已满' };
       }
 
@@ -345,7 +420,7 @@ export class RoomService {
       // Must use the transaction client — using this.prisma here would commit
       // the roomPlayer row outside the transaction.
       try {
-        const playerRecord = await assignSeat(tx, room.id, userId, room.maxPlayers);
+        const playerRecord = await assignSeat(tx, room.id, userId, currentRoom.maxPlayers);
         return { playerRecord };
       } catch (e) {
         // assignSeat throws HTTP-specific BadRequestException on room-full /
@@ -417,6 +492,17 @@ export class RoomService {
       );
 
       const result = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        // Same guard as the non-host branch below: we read WAITING above, but a
+        // concurrent startGame may have flipped the room to PLAYING (roles
+        // persisted) since. Deleting the host's row then would silently drop a
+        // PLAYING game's role and desync the Avalon Redis state, so only touch
+        // the room while it is still WAITING.
+        const guard = await tx.room.updateMany({
+          where: { id: room.id, status: 'WAITING' },
+          data: { updatedAt: new Date() },
+        });
+        if (guard.count === 0) return { playing: true as const };
+
         const remainingPlayers = await tx.roomPlayer.findMany({
           where: { roomId: room.id, userId: { not: userId } },
           orderBy: { seatNo: 'asc' },
@@ -443,6 +529,13 @@ export class RoomService {
           return { deleted: true as const };
         }
       });
+
+      if ('playing' in result && result.playing) {
+        // The room started while the host's leave was in flight. Keep the
+        // seat/role consistent with the PLAYING path instead of removing them.
+        await this.markPlayerOffline(roomCode, userId);
+        return;
+      }
 
       if ('deleted' in result && result.deleted) {
         await this.redis.del(`room:${roomCode}`);
@@ -505,7 +598,7 @@ export class RoomService {
     if (room.hostId !== hostId) return { error: '仅房主可以开始游戏' };
 
     try {
-      const assignments = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const started = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         // Atomically flip WAITING → PLAYING first. The update takes the room
         // row lock until commit, so a concurrent startGame gets count === 0
         // (exactly one start wins) and a concurrent joinRoom blocks on the
@@ -563,7 +656,7 @@ export class RoomService {
         if ('error' in assignmentResult) {
           throw new BadRequestException(assignmentResult.error);
         }
-        const { assignments } = assignmentResult;
+        const { assignments, avalonConfig } = assignmentResult;
 
         // Persist shuffled seat numbers before role assignments.
         // Two-phase update avoids UNIQUE constraint violation on @@unique([roomId, seatNo]).
@@ -594,14 +687,26 @@ export class RoomService {
           },
         });
 
-        return assignments;
+        return {
+          assignments,
+          avalonConfig,
+          gameType: currentRoom.gameType as GameType,
+        };
       });
 
+      const { assignments, avalonConfig, gameType } = started;
+
       // Avalon 房间：事务提交后再初始化 Redis 游戏状态（避免回滚留下脏状态）。
-      // 角色分配已在事务内由 avalon 引擎计算并持久化，这里复用同一份分配，
+      // 角色分配与引擎配置都在事务内算好，这里原样复用，
       // 保证 avalon 游戏状态与 roomPlayer.role（即 room:started 的 yourRole）一致。
-      if (room.gameType !== GameType.SGS) {
-        const initError = await this.initializeAvalonGame(room, assignments);
+      if (gameType !== GameType.SGS) {
+        if (!avalonConfig) {
+          // Unreachable: the Avalon branch of computeRoleAssignments always sets
+          // the config or returns an error. Fail loudly rather than starting a
+          // game with no Redis state.
+          throw new InternalServerErrorException('Avalon 游戏配置缺失');
+        }
+        const initError = await this.initializeAvalonGame(room, assignments, avalonConfig);
         if (initError) {
           let rollbackOk = false;
           try {
@@ -645,7 +750,7 @@ export class RoomService {
         }
       }
 
-      return { assignments };
+      return { assignments, gameType };
     } catch (e) {
       // Business-rule failures raised inside the transaction (after rollback)
       // are returned in the established { error } union shape.
@@ -689,8 +794,9 @@ export class RoomService {
   private computeRoleAssignments(
     room: RoomInfo,
     players: { seatNo: number; userId: string }[],
-  ): StartResult | { error: string } {
+  ): RoleComputation | { error: string } {
     let assignments: RoleAssignment[];
+    let avalonConfig: AvalonGameConfig | undefined;
 
     if (room.gameType === GameType.SGS) {
       const parseResult = SgsRoleConfigSchema.safeParse(room.roleConfig);
@@ -718,17 +824,14 @@ export class RoomService {
         return { error: '角色配置格式无效: ' + errorMessages };
       }
       const config = parseResult.data;
-      const totalRoles = (config.merlin ? 1 : 0) + (config.percival ? 1 : 0)
-        + (config.mordred ? 1 : 0) + (config.morgana ? 1 : 0)
-        + (config.oberon ? 1 : 0) + (config.assassin ? 1 : 0)
-        + config.loyalServants + config.minions;
-      if (totalRoles !== players.length) {
-        return { error: `角色总数(${totalRoles})与玩家数(${players.length})不匹配` };
+      const validationError = validateAvalonRoleConfig(config, players.length);
+      if (validationError) {
+        return { error: validationError };
       }
       // Avalon 房间的角色分配以 avalon 引擎为唯一来源（英文枚举角色名），
       // 保证 roomPlayer.role 与 avalon 游戏状态一致。
       try {
-        const avalonConfig = buildAvalonGameConfig(config);
+        avalonConfig = buildAvalonGameConfig(config);
         const engineRoles = generateAvalonRoles(players.length, avalonConfig);
         const engineAssignments = assignAvalonRoles(
           players.map((p) => ({ seatNo: p.seatNo, userId: p.userId })),
@@ -746,16 +849,21 @@ export class RoomService {
       }
     }
 
-    return { assignments };
+    return { assignments, avalonConfig };
   }
 
   /**
    * 事务提交后为 Avalon 房间初始化 Redis 游戏状态。
    * 失败返回 error：调用方会把房间滚回 WAITING 并删掉 Avalon Redis 状态。
+   *
+   * `config` 必须是事务内算角色时用的那一份：房间快照里的 roleConfig 可能已被
+   * 并发的 updateRoomSettings 改掉，用它重建配置会让 state.config.roles
+   * 与真实发到玩家手里的角色对不上。
    */
   private async initializeAvalonGame(
     room: RoomInfo,
     assignments: RoleAssignment[],
+    config: AvalonGameConfig,
   ): Promise<{ error: string } | void> {
     if (!this.avalonGameInitializer) {
       this.logger.warn(`Avalon game initializer not registered, skipping game-state init for room ${room.code}`);
@@ -764,7 +872,6 @@ export class RoomService {
 
     try {
       const players = await this.getPlayers(room.code);
-      const config = buildAvalonGameConfig(room.roleConfig as RoleConfig);
       await this.avalonGameInitializer.initializeGame(
         room.code,
         players.map((p) => ({
@@ -818,7 +925,12 @@ export class RoomService {
         where: { id: room.id },
         data: { updatedAt: new Date() },
       });
-      await this.redis.hset(`room:${roomCode}`, 'lastActiveAt', Date.now().toString());
+      await this.redis.hsetWithExpire(
+        `room:${roomCode}`,
+        'lastActiveAt',
+        Date.now().toString(),
+        ROOM_HASH_TTL_SECONDS,
+      );
 
       // During a game, transfer the host to another member (preferring an
       // online one) so endGame stays usable even if the host never returns.
@@ -855,7 +967,12 @@ export class RoomService {
         where: { id: room.id },
         data: { updatedAt: new Date() },
       });
-      await this.redis.hset(`room:${roomCode}`, 'lastActiveAt', Date.now().toString());
+      await this.redis.hsetWithExpire(
+        `room:${roomCode}`,
+        'lastActiveAt',
+        Date.now().toString(),
+        ROOM_HASH_TTL_SECONDS,
+      );
     }
   }
 
