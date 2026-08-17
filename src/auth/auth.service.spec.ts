@@ -176,5 +176,43 @@ describe('AuthService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
+
+    it('allows clearing the avatar with an empty string', async () => {
+      prisma.user.update.mockResolvedValue({
+        id: 'user-id',
+        nickName: '小明',
+        avatarUrl: '',
+      });
+
+      const result = await service.updateProfile('user-id', { avatarUrl: '' });
+
+      expect(result.avatarUrl).toBe('');
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-id' },
+        data: { avatarUrl: '' },
+      });
+    });
+
+    it('rejects a lookalike host that would pass a raw startsWith prefix check', async () => {
+      const local = new AuthService(
+        prisma as unknown as PrismaService,
+        redis as unknown as RedisService,
+        {
+          get: jest.fn((key: string) =>
+            key === 'AVATAR_URL_PREFIX'
+              ? 'https://bucket.oss-cn-hangzhou.aliyuncs.com'
+              : undefined,
+          ),
+        } as unknown as ConfigService,
+        jwtService as unknown as JwtService,
+      );
+
+      await expect(
+        local.updateProfile('user-id', {
+          avatarUrl: 'https://bucket.oss-cn-hangzhou.aliyuncs.com.evil.com/x.jpg',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
   });
 });

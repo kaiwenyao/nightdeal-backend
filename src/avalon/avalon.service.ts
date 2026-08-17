@@ -140,16 +140,22 @@ export class AvalonService {
         );
       }
 
-      // 构建玩家列表
-      const avalonPlayers: AvalonPlayer[] = assignments.map((assignment, index) => ({
-        id: assignment.userId,
-        name: players[index].name,
-        seatNo: assignment.seatNo,
-        isHost: players[index].isHost,
-        isConnected: true,
-        role: assignment.role,
-        faction: assignment.faction,
-      }));
+      const playerById = new Map(players.map((p) => [p.userId, p]));
+      const avalonPlayers: AvalonPlayer[] = assignments.map((assignment) => {
+        const player = playerById.get(assignment.userId);
+        if (!player) {
+          throw new Error(`玩家 ${assignment.userId} 不在玩家列表中`);
+        }
+        return {
+          id: assignment.userId,
+          name: player.name,
+          seatNo: assignment.seatNo,
+          isHost: player.isHost,
+          isConnected: true,
+          role: assignment.role,
+          faction: assignment.faction,
+        };
+      });
 
       // 创建初始状态
       const state = createInitialState(roomCode, avalonPlayers, config);

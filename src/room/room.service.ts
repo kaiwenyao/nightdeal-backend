@@ -560,10 +560,17 @@ export class RoomService {
       if (room.gameType !== GameType.SGS) {
         const initError = await this.initializeAvalonGame(room, assignments);
         if (initError) {
-          const rollback = await this.endGame(room.code, room.hostId);
-          if (rollback && 'error' in rollback) {
+          try {
+            const current = await this.getRoom(room.code);
+            if (current?.status === 'PLAYING') {
+              await this.resetRoomToWaiting(current);
+            } else {
+              await this.redis.del(`avalon:${room.code}:state`);
+            }
+          } catch (rollbackErr) {
             this.logger.error(
-              `Failed to roll back startGame after Avalon init failure for room ${room.code}: ${rollback.error}`,
+              `Failed to roll back startGame after Avalon init failure for room ${room.code}:`,
+              rollbackErr,
             );
           }
           return initError;
@@ -587,6 +594,12 @@ export class RoomService {
     if (room.hostId !== hostId) return { error: '仅房主可以结束游戏' };
     if (room.status !== 'PLAYING') return { error: '游戏尚未开始' };
 
+    await this.resetRoomToWaiting(room);
+    return { success: true };
+  }
+
+  /** Drop PLAYING → WAITING and delete Avalon Redis state. No host check. */
+  private async resetRoomToWaiting(room: RoomInfo): Promise<void> {
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.roomPlayer.updateMany({
         where: { roomId: room.id },
@@ -601,8 +614,7 @@ export class RoomService {
         data: { endedAt: new Date() },
       });
     });
-
-    return { success: true };
+    await this.redis.del(`avalon:${room.code}:state`);
   }
 
   /** Shared SGS / Avalon role computation for {@link startGame}. */
@@ -671,7 +683,7 @@ export class RoomService {
 
   /**
    * 事务提交后为 Avalon 房间初始化 Redis 游戏状态。
-   * 失败返回 error：调用方会 endGame 把房间滚回 WAITING。
+   * 失败返回 error：调用方会把房间滚回 WAITING 并删掉 Avalon Redis 状态。
    */
   private async initializeAvalonGame(
     room: RoomInfo,
@@ -965,6 +977,7 @@ export class RoomService {
       await this.prisma.roomPlayer.deleteMany({ where: { roomId: room.id } });
       await this.prisma.room.delete({ where: { id: room.id } });
       await this.redis.del(`room:${room.code}`);
+      await this.redis.del(`avalon:${room.code}:state`);
       // Clean up per-player offline markers — they have no TTL by design.
       for (const player of players) {
         await this.redis.del(`room:${room.code}:offline:${player.userId}`);

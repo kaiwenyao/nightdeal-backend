@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { WeChatApiException } from '../common/exceptions/wechat-api.exception';
+import { isAllowedAvatarUrl } from './avatar-url';
 
 interface WeChatSessionResponse {
   openid: string;
@@ -60,9 +61,9 @@ export class AuthService {
 
   async updateProfile(userId: string, data: { nickName?: string; avatarUrl?: string }) {
     if (data.avatarUrl !== undefined) {
-      // 头像地址必须来自本服务的 OSS，防止挂任意外链
+      // 空字符串表示清空头像；非空必须落在本服务 OSS 源+路径下
       const avatarUrlPrefix = this.config.get<string>('AVATAR_URL_PREFIX');
-      if (!avatarUrlPrefix || !data.avatarUrl.startsWith(avatarUrlPrefix)) {
+      if (!isAllowedAvatarUrl(data.avatarUrl, avatarUrlPrefix)) {
         throw new BadRequestException('头像地址不合法，请先通过头像上传接口上传');
       }
     }

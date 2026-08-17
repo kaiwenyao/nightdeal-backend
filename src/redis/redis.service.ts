@@ -12,7 +12,7 @@ export class RedisService implements OnModuleDestroy {
     this.client = new Redis(redisUrl, {
       // 限制单条命令的重试次数，避免 Redis 不可用时请求无限挂起
       maxRetriesPerRequest: 3,
-      // 指数退避重连，封顶 5s
+      // 线性退避重连，每次增加 200ms，封顶 5s
       retryStrategy: (times) => Math.min(times * 200, 5000),
     });
     // ioredis 是 EventEmitter，未监听的 'error' 事件会作为 uncaughtException 打挂进程

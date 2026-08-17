@@ -452,6 +452,7 @@ describe('RoomService', () => {
         where: { id: 'room-1' },
         data: { status: 'WAITING' },
       });
+      expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
       expect(mockRedis.hset).not.toHaveBeenCalledWith('room:ABCDEF', 'status', expect.anything());
     });
 
@@ -635,6 +636,7 @@ describe('RoomService', () => {
         where: { id: 'room-1' },
         data: { status: 'WAITING' },
       });
+      expect(mockRedis.del).toHaveBeenCalledWith('avalon:ABCDEF:state');
     });
   });
 
