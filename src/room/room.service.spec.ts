@@ -60,6 +60,7 @@ describe('RoomService', () => {
     mockPrisma.gameRecord.findFirst.mockReset().mockResolvedValue({ id: 'game-1' });
     mockPrisma.gameRecord.updateMany.mockReset().mockResolvedValue({ count: 1 });
     mockPrisma.roomPlayer.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+    mockPrisma.roomPlayer.updateMany.mockReset().mockResolvedValue({ count: 1 });
     mockRedis.get.mockReset().mockResolvedValue(null);
     mockRedis.setWithLock.mockReset().mockResolvedValue(undefined);
     mockRedis.delWithLock.mockReset().mockResolvedValue(undefined);
@@ -417,11 +418,12 @@ describe('RoomService', () => {
 
     it('deletes the room player and clears the offline marker', async () => {
       mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
 
       await service.leaveRoom('ABCDEF', 'user-1');
 
       expect(mockPrisma.roomPlayer.deleteMany).toHaveBeenCalledWith({
-        where: { roomId: 'room-1', userId: 'user-1' },
+        where: { roomId: 'room-1', userId: 'user-1', presenceVersion: 0 },
       });
       expect(mockRedis.delWithLock).toHaveBeenCalledWith(
         expect.objectContaining({ key: 'lock:room:ABCDEF:presence' }),
@@ -432,6 +434,7 @@ describe('RoomService', () => {
 
     it('transfers host to an online member when the host leaves', async () => {
       mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
       mockPrisma.roomPlayer.findMany.mockResolvedValue([
         { id: 'p-2', roomId: 'room-1', userId: 'u-offline', seatNo: 2 },
         { id: 'p-3', roomId: 'room-1', userId: 'u-online', seatNo: 3 },
@@ -454,6 +457,7 @@ describe('RoomService', () => {
       // WAITING→PLAYING (roles persisted) before we took the row lock, so the
       // status-guarded update inside the transaction matches nothing.
       mockPrisma.room.findUnique.mockResolvedValue(mockRoom);
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
       // Once only: mockResolvedValue would leak into later tests, since the
       // suite uses clearAllMocks (calls) and not resetAllMocks (implementations).
       mockPrisma.room.updateMany.mockResolvedValueOnce({ count: 0 });
@@ -1212,6 +1216,28 @@ describe('RoomService', () => {
     });
   });
 
+  describe('cleanupOfflinePlayer presence CAS', () => {
+    it('does not delete a membership whose presence version changed after cleanup began', async () => {
+      const waitingRoom = {
+        id: 'room-1', code: 'ABCDEF', hostId: 'host-1', status: 'WAITING' as const,
+        gameType: GameType.AVALON, roleConfig: {}, maxPlayers: 5,
+        createdAt: new Date(), updatedAt: new Date(),
+      };
+      mockPrisma.room.findUnique.mockResolvedValue(waitingRoom);
+      mockRedis.get.mockResolvedValue('1');
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 7 });
+      mockPrisma.roomPlayer.deleteMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.cleanupOfflinePlayer('ABCDEF', 'u-1');
+
+      expect(result).toBe('not_found');
+      expect(mockPrisma.roomPlayer.deleteMany).toHaveBeenCalledWith({
+        where: { roomId: 'room-1', userId: 'u-1', presenceVersion: 7 },
+      });
+      expect(mockRedis.delWithLock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('cleanupOfflinePlayers', () => {
     it('broadcasts via the registered notifier after removing offline players', async () => {
       const waitingRoom = {
@@ -1231,7 +1257,7 @@ describe('RoomService', () => {
         { id: 'p-1', roomId: 'room-1', userId: 'u-1', seatNo: 1, role: null, joinedAt: new Date(), user: { id: 'u-1', nickName: 'a', avatarUrl: '' } },
       ]);
       mockRedis.get.mockResolvedValue('1'); // everyone offline long past the grace period
-      mockPrisma.roomPlayer.findFirst.mockResolvedValue(null); // removed after leaveRoom
+      mockPrisma.roomPlayer.findFirst.mockResolvedValue({ presenceVersion: 0 });
       const notifier = { notifyClientsAfterLeave: jest.fn().mockResolvedValue(undefined) };
       service.setEventsNotifier(notifier);
 

@@ -61,6 +61,9 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     // 把 avalon 游戏初始化器注册进 RoomService（与 RoomEventsNotifier 同模式），
     // 避免 RoomModule 反向依赖 AvalonModule 造成模块循环依赖。
     this.roomService.setAvalonGameInitializer(this.avalonService);
+    this.avalonService.setGenerationValidator(
+      (roomCode, generationId) => this.roomService.isActiveGameGeneration(roomCode, generationId),
+    );
   }
 
   async handleConnection(client: Socket) {

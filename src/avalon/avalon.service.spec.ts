@@ -246,6 +246,16 @@ describe('AvalonService', () => {
     });
   });
 
+  describe('generation validation', () => {
+    it('hides and rejects state from a non-active database generation', async () => {
+      await service.initializeGame('ABC123', basePlayers, baseConfig, undefined, 'game-old');
+      service.setGenerationValidator(async (_roomCode, generationId) => generationId === 'game-new');
+
+      expect(await service.getGameState('ABC123')).toBeNull();
+      await expect(service.beginGame('ABC123', 'u1')).resolves.toEqual({ error: '游戏不存在' });
+    });
+  });
+
   describe('lock fencing', () => {
     it('does not persist a transition after the Redis lease is lost', async () => {
       await initGame();

@@ -22,11 +22,13 @@ describe('AvalonGateway', () => {
     updateHost: jest.fn(),
     markPlayerOnline: jest.fn(),
     markPlayerOffline: jest.fn(),
+    setGenerationValidator: jest.fn(),
   };
 
   const mockRoomService = {
     getRoom: jest.fn(),
     getPlayer: jest.fn(),
+    isActiveGameGeneration: jest.fn(),
     setAvalonGameInitializer: jest.fn(),
   };
 

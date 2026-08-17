@@ -476,12 +476,19 @@ export class RoomService {
     userId: string,
     skipOfflineMark = false,
     presenceLease?: RedisLockLease,
+    expectedPresenceVersion?: number,
   ): Promise<LeaveOutcome> {
     if (!presenceLease) {
       return this.redis.withLock(
         `lock:room:${roomCode}:presence`,
         10_000,
-        (lease) => this.leaveRoom(roomCode, userId, skipOfflineMark, lease),
+        (lease) => this.leaveRoom(
+          roomCode,
+          userId,
+          skipOfflineMark,
+          lease,
+          expectedPresenceVersion,
+        ),
       );
     }
     const room = await this.getRoom(roomCode);
@@ -491,6 +498,13 @@ export class RoomService {
       if (!skipOfflineMark) await this.markPlayerOffline(roomCode, userId, true, presenceLease);
       return 'offline';
     }
+    const presence = expectedPresenceVersion !== undefined
+      ? { presenceVersion: expectedPresenceVersion }
+      : await this.prisma.roomPlayer.findFirst({
+        where: { roomId: room.id, userId },
+        select: { presenceVersion: true },
+      });
+    if (!presence) return 'not_found';
 
     // If the host is leaving, transfer host to another member, preferring an
     // online one (smallest seatNo as tie-breaker) so room management stays usable.
@@ -519,8 +533,13 @@ export class RoomService {
         });
         if (guard.count === 0) return { playing: true as const };
 
+        const deletedPlayer = await tx.roomPlayer.deleteMany({
+          where: { roomId: room.id, userId, presenceVersion: presence.presenceVersion },
+        });
+        if (deletedPlayer.count === 0) return { notFound: true as const };
+
         const remainingPlayers = await tx.roomPlayer.findMany({
-          where: { roomId: room.id, userId: { not: userId } },
+          where: { roomId: room.id },
           orderBy: { seatNo: 'asc' },
         });
         if (remainingPlayers.length > 0) {
@@ -535,9 +554,6 @@ export class RoomService {
             where: { id: room.id },
             data: { hostId: newHostId, updatedAt: new Date() },
           });
-          await tx.roomPlayer.deleteMany({
-            where: { roomId: room.id, userId },
-          });
           return { newHostId };
         } else {
           // Last player leaving — delete the room
@@ -546,6 +562,7 @@ export class RoomService {
         }
       });
 
+      if ('notFound' in result && result.notFound) return 'not_found';
       if ('playing' in result && result.playing) {
         // The room started while the host's leave was in flight. Keep the
         // seat/role consistent with the PLAYING path instead of removing them.
@@ -572,7 +589,7 @@ export class RoomService {
         });
         if (guard.count === 0) return 'playing' as const;
         const deleted = await tx.roomPlayer.deleteMany({
-          where: { roomId: room.id, userId },
+          where: { roomId: room.id, userId, presenceVersion: presence.presenceVersion },
         });
         return deleted.count > 0 ? 'deleted' as const : 'not_found' as const;
       });
@@ -633,8 +650,17 @@ export class RoomService {
         data: { updatedAt: new Date() },
       });
       if (guard.count === 0) return { error: '游戏已开始或房主已变更' } as const;
-      const result = await tx.roomPlayer.deleteMany({
+      const target = await tx.roomPlayer.findFirst({
         where: { roomId: room.id, userId: targetUserId },
+        select: { presenceVersion: true },
+      });
+      if (!target) return { error: '该玩家不在房间中' } as const;
+      const result = await tx.roomPlayer.deleteMany({
+        where: {
+          roomId: room.id,
+          userId: targetUserId,
+          presenceVersion: target.presenceVersion,
+        },
       });
       return result.count === 0
         ? ({ error: '该玩家不在房间中' } as const)
@@ -1081,6 +1107,18 @@ export class RoomService {
     return players.map((p: { room: { code: string } }) => p.room.code);
   }
 
+  async isActiveGameGeneration(roomCode: string, generationId: string): Promise<boolean> {
+    const active = await this.prisma.gameRecord.findFirst({
+      where: {
+        id: generationId,
+        endedAt: null,
+        room: { code: roomCode, status: 'PLAYING' },
+      },
+      select: { id: true },
+    });
+    return active !== null;
+  }
+
   async getPlayerRole(roomCode: string, userId: string): Promise<string | null> {
     const player = await this.getPlayer(roomCode, userId);
     return player?.role || null;
@@ -1091,7 +1129,7 @@ export class RoomService {
     userId: string,
     presenceLocked = false,
     presenceLease?: RedisLockLease,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!presenceLocked) {
       return this.redis.withLock(
         `lock:room:${roomCode}:presence`,
@@ -1101,6 +1139,12 @@ export class RoomService {
     }
     if (!presenceLease) throw new Error('Presence update attempted without lock lease');
     const room = await this.getRoom(roomCode);
+    if (!room) return false;
+    const bumped = await this.prisma.roomPlayer.updateMany({
+      where: { roomId: room.id, userId },
+      data: { presenceVersion: { increment: 1 } },
+    });
+    if (bumped.count === 0) return false;
     // No TTL: the marker lives until the player leaves/reconnects or the room
     // is deleted. A TTL would let a still-disconnected player "revive" as online.
     await this.redis.setWithLock(
@@ -1150,6 +1194,7 @@ export class RoomService {
         }
       }
     }
+    return true;
   }
 
   async markPlayerOnline(
@@ -1157,7 +1202,7 @@ export class RoomService {
     userId: string,
     presenceLocked = false,
     presenceLease?: RedisLockLease,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!presenceLocked) {
       return this.redis.withLock(
         `lock:room:${roomCode}:presence`,
@@ -1167,6 +1212,12 @@ export class RoomService {
     }
     if (!presenceLease) throw new Error('Presence update attempted without lock lease');
     const room = await this.getRoom(roomCode);
+    if (!room) return false;
+    const bumped = await this.prisma.roomPlayer.updateMany({
+      where: { roomId: room.id, userId },
+      data: { presenceVersion: { increment: 1 } },
+    });
+    if (bumped.count === 0) return false;
     await this.redis.delWithLock(presenceLease, `room:${roomCode}:offline:${userId}`);
     if (room) {
       await this.prisma.room.update({
@@ -1180,6 +1231,7 @@ export class RoomService {
         ROOM_HASH_TTL_SECONDS,
       );
     }
+    return true;
   }
 
   async isPlayerOffline(roomCode: string, userId: string): Promise<boolean> {
@@ -1194,7 +1246,14 @@ export class RoomService {
       if (!Number.isFinite(disconnectedAt) || Date.now() - disconnectedAt < PLAYER_OFFLINE_GRACE_MS) {
         return 'skipped';
       }
-      return this.leaveRoom(roomCode, userId, true, lease);
+      const room = await this.getRoom(roomCode);
+      if (!room) return 'not_found';
+      const player = await this.prisma.roomPlayer.findFirst({
+        where: { roomId: room.id, userId },
+        select: { presenceVersion: true },
+      });
+      if (!player) return 'not_found';
+      return this.leaveRoom(roomCode, userId, true, lease, player.presenceVersion);
     });
   }
 

@@ -53,8 +53,9 @@ model RoomPlayer {
   roomId    String
   userId    String
   seatNo    Int
-  role      String?
-  joinedAt  DateTime @default(now())
+  role            String?
+  presenceVersion Int      @default(0)
+  joinedAt        DateTime @default(now())
 
   room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id])

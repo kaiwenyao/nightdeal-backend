@@ -119,6 +119,7 @@ describe('RoomGateway', () => {
     (gateway as any).server = mockServer;
 
     authService.verifyToken.mockResolvedValue('user-2');
+    roomService.markPlayerOnline.mockResolvedValue(true);
   });
 
   describe('broadcastRoomState', () => {
@@ -153,7 +154,7 @@ describe('RoomGateway', () => {
       roomService.getRoom.mockResolvedValue(mockRoom);
       roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
       roomService.isPlayerOffline.mockResolvedValue(true);
-      roomService.markPlayerOnline.mockResolvedValue(undefined);
+      roomService.markPlayerOnline.mockResolvedValue(true);
       roomService.getPlayers.mockResolvedValue(mockPlayers);
 
       await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
@@ -162,6 +163,22 @@ describe('RoomGateway', () => {
       expect(roomService.markPlayerOnline).toHaveBeenCalledWith('ABCDEF', 'user-2');
       expect(mockServer.emit).toHaveBeenCalledWith('room:state', expect.any(Object));
       expect(mockServer.emit).toHaveBeenCalledWith('room:reconnected', { userId: 'user-2' });
+    });
+
+    it('does not subscribe a stale member when timed cleanup wins reconnection', async () => {
+      roomService.getRoom.mockResolvedValue({ ...mockRoom, status: 'PLAYING' });
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.isPlayerOffline.mockResolvedValue(true);
+      roomService.markPlayerOnline.mockResolvedValue(false);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.join).not.toHaveBeenCalled();
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'GAME_ALREADY_STARTED',
+        message: '游戏已开始，无法加入',
+      });
+      expect(mockServer.emit).not.toHaveBeenCalledWith('room:reconnected', expect.anything());
     });
 
     it('broadcasts room state for already-online player rejoining', async () => {
@@ -502,6 +519,18 @@ describe('RoomGateway', () => {
 
       expect(mockServer.emit).toHaveBeenCalledWith('room:offline', { userId: 'user-2' });
       expect(mockServer.emit).not.toHaveBeenCalledWith('room:player-left', expect.anything());
+    });
+
+    it('keeps exactly one cleanup timer for duplicate final-disconnect handling', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      await gateway.handleDisconnect(mockClient);
+      await gateway.handleDisconnect(mockClient);
+
+      expect(jest.getTimerCount()).toBe(1);
     });
 
     it('does nothing while the user still has live connections on any instance', async () => {

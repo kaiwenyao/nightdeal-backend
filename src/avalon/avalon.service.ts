@@ -48,6 +48,7 @@ export class AvalonService {
   // 进程内锁，当前按单实例部署；多实例需要换成 Redis SET NX EX。
   private roomChains = new Map<string, Promise<unknown>>();
   private roomLeases = new Map<string, RedisLockLease>();
+  private generationValidator: ((roomCode: string, generationId: string) => Promise<boolean>) | null = null;
 
   constructor(private redis: RedisService) {}
 
@@ -75,6 +76,12 @@ export class AvalonService {
     return chained;
   }
 
+  setGenerationValidator(
+    validator: (roomCode: string, generationId: string) => Promise<boolean>,
+  ): void {
+    this.generationValidator = validator;
+  }
+
   // ==================== 游戏状态管理 ====================
 
   /**
@@ -83,7 +90,12 @@ export class AvalonService {
   async getGameState(roomCode: string): Promise<AvalonGameState | null> {
     const data = await this.redis.get(`avalon:${roomCode}:state`);
     if (!data) return null;
-    return JSON.parse(data) as AvalonGameState;
+    const state = JSON.parse(data) as AvalonGameState;
+    if (this.generationValidator) {
+      if (!state.generationId) return null;
+      if (!(await this.generationValidator(roomCode, state.generationId))) return null;
+    }
+    return state;
   }
 
   /**
