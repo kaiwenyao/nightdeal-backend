@@ -620,6 +620,7 @@ describe('RoomService', () => {
       mockPrisma.room.findUnique
         .mockResolvedValueOnce(avalonRoom)
         .mockResolvedValueOnce(playingRoom)
+        .mockResolvedValueOnce(playingRoom)
         .mockResolvedValueOnce(playingRoom);
       mockPrisma.roomPlayer.findMany.mockResolvedValue(players);
       mockPrisma.gameRecord.create.mockResolvedValue({});

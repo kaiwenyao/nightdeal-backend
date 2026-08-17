@@ -439,15 +439,30 @@ export class RoomService {
         return;
       }
     } else {
-      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const leaving = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        // Guard against a concurrent startGame: we may have read WAITING above
+        // but the room could have flipped to PLAYING (role assignments
+        // persisted) since. Deleting the row then would silently drop a
+        // PLAYING game's role and desync the Avalon Redis state, so only delete
+        // while the room is still WAITING; otherwise leave the player in place
+        // and let the caller mark them offline instead.
+        const guard = await tx.room.updateMany({
+          where: { id: room.id, status: 'WAITING' },
+          data: { updatedAt: new Date() },
+        });
+        if (guard.count === 0) return 'playing' as const;
         await tx.roomPlayer.deleteMany({
           where: { roomId: room.id, userId },
         });
-        await tx.room.update({
-          where: { id: room.id },
-          data: { updatedAt: new Date() },
-        });
+        return 'deleted' as const;
       });
+
+      if (leaving === 'playing') {
+        // The room started while this player's leave was in flight. Keep the
+        // seat/role consistent with the PLAYING path instead of removing them.
+        await this.markPlayerOffline(roomCode, userId);
+        return;
+      }
     }
 
     await this.redis.del(`room:${roomCode}:offline:${userId}`);
@@ -493,6 +508,17 @@ export class RoomService {
           throw new BadRequestException('游戏已开始');
         }
 
+        // Re-read the room INSIDE the transaction (after the WAITING→PLAYING
+        // flip acquires the room row lock) so roleConfig / isRandomSeat are the
+        // latest committed values. The room snapshot from getRoom() above may be
+        // stale if a concurrent updateRoomSettings committed between the read
+        // and this flip; using a stale config here would compute roles from
+        // outdated settings.
+        const currentRoom = await tx.room.findUnique({ where: { id: room.id } });
+        if (!currentRoom) {
+          throw new BadRequestException('房间不存在');
+        }
+
         // Read the player list INSIDE the transaction (after acquiring the
         // room lock) so a concurrent leave cannot lose its role cleanup and a
         // concurrent join cannot produce a role-less player.
@@ -501,13 +527,14 @@ export class RoomService {
           orderBy: { seatNo: 'asc' },
         });
 
-        const minPlayers = room.gameType === GameType.SGS ? 2 : 5;
+        const minPlayers = currentRoom.gameType === GameType.SGS ? 2 : 5;
         if (players.length < minPlayers) {
           throw new BadRequestException(`至少需要 ${minPlayers} 名玩家`);
         }
 
+        const isRandomSeat = currentRoom.isRandomSeat;
         // Shuffle seat numbers if random seat is enabled
-        if (room.isRandomSeat) {
+        if (isRandomSeat) {
           const shuffledPlayers = [...players];
           for (let i = shuffledPlayers.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
@@ -516,7 +543,12 @@ export class RoomService {
           players = shuffledPlayers.map((p, i) => ({ ...p, seatNo: i + 1 }));
         }
 
-        const assignmentResult = this.computeRoleAssignments(room, players);
+        const assignmentResult = this.computeRoleAssignments({
+          ...room,
+          gameType: currentRoom.gameType as GameType,
+          roleConfig: currentRoom.roleConfig as never,
+          isRandomSeat,
+        }, players);
         if ('error' in assignmentResult) {
           throw new BadRequestException(assignmentResult.error);
         }
@@ -524,7 +556,7 @@ export class RoomService {
 
         // Persist shuffled seat numbers before role assignments.
         // Two-phase update avoids UNIQUE constraint violation on @@unique([roomId, seatNo]).
-        if (room.isRandomSeat) {
+        if (isRandomSeat) {
           const tempOffset = players.length + 1;
           for (const player of players) {
             await tx.roomPlayer.updateMany({
@@ -560,6 +592,7 @@ export class RoomService {
       if (room.gameType !== GameType.SGS) {
         const initError = await this.initializeAvalonGame(room, assignments);
         if (initError) {
+          let rollbackOk = false;
           try {
             const current = await this.getRoom(room.code);
             if (current?.status === 'PLAYING') {
@@ -567,11 +600,35 @@ export class RoomService {
             } else {
               await this.redis.del(`avalon:${room.code}:state`);
             }
+            rollbackOk = true;
           } catch (rollbackErr) {
             this.logger.error(
               `Failed to roll back startGame after Avalon init failure for room ${room.code}:`,
               rollbackErr,
             );
+          }
+          // If the rollback could not restore WAITING, the room may be stuck in
+          // PLAYING with persisted roles but no Avalon Redis state. Make a
+          // last-resort attempt to force it back to WAITING so the room is not
+          // permanently unplayable, then tell the host how to recover.
+          if (!rollbackOk) {
+            try {
+              const forced = await this.prisma.room.updateMany({
+                where: { id: room.id, status: 'PLAYING' },
+                data: { status: 'WAITING' },
+              });
+              if (forced.count === 0) {
+                this.logger.warn(`Room ${room.code} is not PLAYING anymore during rollback; skipping force-reset`);
+              } else {
+                await this.redis.del(`avalon:${room.code}:state`);
+              }
+            } catch (forceErr) {
+              this.logger.error(
+                `CRITICAL: Room ${room.code} may be stuck in PLAYING with no Avalon state after rollback failure:`,
+                forceErr,
+              );
+              return { error: 'Avalon 游戏状态初始化失败，房间可能仍是进行中状态，请尝试结束游戏或等待自动清理' };
+            }
           }
           return initError;
         }

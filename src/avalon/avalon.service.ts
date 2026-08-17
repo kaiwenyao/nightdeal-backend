@@ -84,6 +84,16 @@ export class AvalonService {
       JSON.stringify(state),
       GAME_STATE_TTL,
     );
+    // Touch the room's activity marker so idle-room cleanup does not mistake
+    // an actively-played game (stable connections, no disconnects for >1h)
+    // for an abandoned one. Avalon game actions never route through
+    // markPlayerOnline/Offline, so without this the room would look idle even
+    // while players are mid-game and be cascade-deleted along with its state.
+    await this.redis.hset(
+      `room:${roomCode}`,
+      'lastActiveAt',
+      Date.now().toString(),
+    );
   }
 
   /**
@@ -116,6 +126,14 @@ export class AvalonService {
       let assignments: { seatNo: number; userId: string; role: AvalonRole; faction: Faction }[];
 
       if (precomputedAssignments) {
+        // Guard count first: a precomputed assignment list must cover exactly
+        // the players, otherwise the DB role entries would diverge from the
+        // Redis game state (extra assignments belong to users not in the game).
+        if (precomputedAssignments.length !== players.length) {
+          throw new Error(
+            `预计算角色分配数量(${precomputedAssignments.length})与玩家数量(${players.length})不匹配`,
+          );
+        }
         const assignmentMap = new Map(precomputedAssignments.map(a => [a.userId, a.role]));
         assignments = players.map(p => {
           const role = assignmentMap.get(p.userId);

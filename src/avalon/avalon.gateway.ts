@@ -199,11 +199,18 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       if (view) {
         client.emit('avalon:state', view);
       }
-
-      await this.broadcastGameState(payload.roomCode);
     } catch (error) {
       this.logger.error(`Error handling avalon:join for user ${userId} room ${payload.roomCode}:`, error);
       client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: '加入游戏失败，请重试' });
+      return;
+    }
+
+    // broadcast 失败不应让客户端误以为加入失败：此时客户端已成功加入并收到
+    // 自己的状态视图，广播只是顺带通知其他人。
+    try {
+      await this.broadcastGameState(payload.roomCode);
+    } catch (error) {
+      this.logger.error(`Failed to broadcast game state after join for room ${payload.roomCode}:`, error);
     }
   }
 
