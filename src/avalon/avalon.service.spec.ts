@@ -118,7 +118,7 @@ describe('AvalonService', () => {
 
       const result = await service.beginGame('ABC123', 'u1');
 
-      expect(result).toEqual({ success: true });
+      expect(result).toEqual({ success: true, phase: 'team_building', round: 1 });
       const state = await service.getGameState('ABC123');
       expect(state!.phase).toBe('team_building');
     });

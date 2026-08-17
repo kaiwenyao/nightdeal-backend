@@ -88,8 +88,13 @@ export class AuthService {
       const sessionKey = `session:${payload.sub}`;
       const session = await this.redis.get(sessionKey);
       if (!session) return null;
-      // 滑动续期：校验成功就重置会话 TTL，长对局不会因 2 小时不活动被集体踢下线
-      await this.redis.expire(sessionKey, AuthService.SESSION_TTL_SECONDS);
+      // 滑动续期：校验成功就重置会话 TTL，长对局不会因 2 小时不活动被集体踢下线。
+      // 续期失败不能把已通过的会话判失效。
+      try {
+        await this.redis.expire(sessionKey, AuthService.SESSION_TTL_SECONDS);
+      } catch (err) {
+        this.logger.warn(`Failed to renew session TTL for user ${payload.sub}: ${err}`);
+      }
       return payload.sub;
     } catch {
       return null;

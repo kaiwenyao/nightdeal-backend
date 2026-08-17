@@ -217,11 +217,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     assignments: { userId: string; role: string }[],
   ): Promise<void> {
     const room = await this.broadcastRoomState(roomCode);
-    const gameType = room?.gameType ?? 'AVALON';
+    // room:state 必须先于 room:started：客户端靠 state 里的 gameType 决定跳 Avalon 还是 SGS。
+    if (!room) return;
     for (const assignment of assignments) {
       this.server.to('user:' + assignment.userId).emit('room:started', {
         yourRole: assignment.role,
-        gameType,
+        gameType: room.gameType,
       });
     }
   }

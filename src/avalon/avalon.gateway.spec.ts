@@ -164,15 +164,15 @@ describe('AvalonGateway', () => {
 
       expect(client.leave).toHaveBeenCalledWith('avalon:OLD999');
       expect(client.data.avalonRooms).toEqual(['ABC123']);
+      expect(mockAvalonService.markPlayerOffline).toHaveBeenCalledWith('OLD999', 'u1');
     });
   });
 
   describe('handleBegin', () => {
     it('broadcasts state and phase-changed on success', async () => {
       mockRoomService.getPlayer.mockResolvedValue({ userId: 'u1' });
-      mockAvalonService.beginGame.mockResolvedValue({ success: true });
+      mockAvalonService.beginGame.mockResolvedValue({ success: true, phase: 'team_building', round: 1 });
       mockAvalonService.getAllPlayerViews.mockResolvedValue(new Map());
-      mockAvalonService.getGameState.mockResolvedValue({ phase: 'team_building', round: 1 });
       const client = buildClient('u1');
 
       await gateway.handleBegin(client as never, { roomCode: 'ABC123' });

@@ -99,6 +99,19 @@ describe('HttpExceptionFilter', () => {
     expect(JSON.stringify(body)).not.toContain('database password leaked');
   });
 
+  it('maps room-related 404 to 房间不存在 in development', () => {
+    process.env.NODE_ENV = 'development';
+    const filter = new HttpExceptionFilter();
+    const { host, json } = createHost();
+
+    filter.catch(new NotFoundException('房间不存在或已解散'), host);
+
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      code: 40401,
+      message: '房间不存在',
+    }));
+  });
+
   it('maps room-related 404 to 房间不存在 in production', () => {
     process.env.NODE_ENV = 'production';
     const filter = new HttpExceptionFilter();

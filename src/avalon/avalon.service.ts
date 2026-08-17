@@ -90,8 +90,9 @@ export class AvalonService {
    * 删除游戏状态
    */
   async deleteGameState(roomCode: string): Promise<void> {
-    await this.redis.del(`avalon:${roomCode}:state`);
-    this.roomChains.delete(roomCode);
+    return this.withRoomLock(roomCode, async () => {
+      await this.redis.del(`avalon:${roomCode}:state`);
+    });
   }
 
   // ==================== 游戏初始化 ====================
@@ -115,16 +116,17 @@ export class AvalonService {
       let assignments: { seatNo: number; userId: string; role: AvalonRole; faction: Faction }[];
 
       if (precomputedAssignments) {
+        const assignmentMap = new Map(precomputedAssignments.map(a => [a.userId, a.role]));
         assignments = players.map(p => {
-          const found = precomputedAssignments.find(a => a.userId === p.userId);
-          if (!found) {
+          const role = assignmentMap.get(p.userId);
+          if (!role) {
             throw new Error(`缺少玩家 ${p.userId} 的角色分配`);
           }
           return {
             seatNo: p.seatNo,
             userId: p.userId,
-            role: found.role,
-            faction: getFaction(found.role),
+            role,
+            faction: getFaction(role),
           };
         });
       } else {
@@ -186,7 +188,7 @@ export class AvalonService {
   async beginGame(
     roomCode: string,
     hostId: PlayerId,
-  ): Promise<{ success: true } | { error: string }> {
+  ): Promise<{ success: true; phase: AvalonGameState['phase']; round: number } | { error: string }> {
     return this.withRoomLock(roomCode, async () => {
       const state = await this.getGameState(roomCode);
       if (!state) return { error: '游戏不存在' };
@@ -195,7 +197,7 @@ export class AvalonService {
         const newState = engineBeginGame(state, hostId);
         await this.saveGameState(roomCode, newState);
         this.logger.log(`Room ${roomCode} advanced to team_building by host ${hostId}`);
-        return { success: true };
+        return { success: true, phase: newState.phase, round: newState.round };
       } catch (error) {
         return { error: (error as Error).message };
       }

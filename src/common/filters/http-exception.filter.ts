@@ -102,7 +102,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // 生产环境只屏蔽 5xx 的具体原因；4xx 业务错误保留原始 message 供客户端提示。
       // 404 例外：无论环境都走映射文案，避免路由 404 暴露内部路径、业务 404 语义串扰。
       message:
-        isProduction && (isServerError || businessCode === 40401)
+        (isServerError || businessCode === 40401)
           ? defaultMessage
           : publicMessage,
     };

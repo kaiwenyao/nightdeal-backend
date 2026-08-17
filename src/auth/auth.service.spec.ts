@@ -140,6 +140,16 @@ describe('AuthService', () => {
       expect(result).toBeNull();
       expect(redis.expire).not.toHaveBeenCalled();
     });
+
+    it('still returns the user id when TTL renewal fails', async () => {
+      jwtService.verify.mockReturnValue({ sub: 'user-id' });
+      redis.get.mockResolvedValue(JSON.stringify({ userId: 'user-id' }));
+      redis.expire.mockRejectedValueOnce(new Error('redis down'));
+
+      const result = await service.verifyToken('valid-token');
+
+      expect(result).toBe('user-id');
+    });
   });
 
   describe('updateProfile avatarUrl validation', () => {

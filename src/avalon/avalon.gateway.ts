@@ -143,6 +143,21 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     }
   }
 
+  /** 退出 avalon 房间订阅；若该用户没有其他 socket 仍在房间内，则标记离线并广播。 */
+  private async detachFromAvalonRoom(client: Socket, roomCode: string, userId: string): Promise<void> {
+    client.leave(`avalon:${roomCode}`);
+    try {
+      const remaining = await this.server.in(`avalon:${roomCode}`).fetchSockets();
+      if (remaining.some(s => s.data?.userId === userId)) {
+        return;
+      }
+      await this.avalonService.markPlayerOffline(roomCode, userId);
+      await this.broadcastGameState(roomCode);
+    } catch (error) {
+      this.logger.error(`Error detaching user ${userId} from avalon room ${roomCode}:`, error);
+    }
+  }
+
   // ==================== 房间加入/离开 ====================
 
   /**
@@ -183,7 +198,7 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       const joinedRooms: string[] = client.data.avalonRooms ?? [];
       for (const code of joinedRooms) {
         if (code !== payload.roomCode) {
-          client.leave(`avalon:${code}`);
+          await this.detachFromAvalonRoom(client, code, userId);
         }
       }
       client.data.avalonRooms = [payload.roomCode];
@@ -214,22 +229,10 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     @MessageBody() payload: GetPlayerViewDto,
   ) {
     const userId = client.data.userId;
-    client.leave(`avalon:${payload.roomCode}`);
     const joinedRooms: string[] = client.data.avalonRooms ?? [];
     client.data.avalonRooms = joinedRooms.filter(code => code !== payload.roomCode);
     this.logger.debug(`User ${userId} left game room ${payload.roomCode}`);
-
-    try {
-      // 同一用户若还有其他 socket 留在该 avalon 房间，不算离线
-      const remaining = await this.server.in(`avalon:${payload.roomCode}`).fetchSockets();
-      if (remaining.some(s => s.data?.userId === userId)) {
-        return;
-      }
-      await this.avalonService.markPlayerOffline(payload.roomCode, userId);
-      await this.broadcastGameState(payload.roomCode);
-    } catch (error) {
-      this.logger.error(`Error handling avalon:leave for user ${userId} room ${payload.roomCode}:`, error);
-    }
+    await this.detachFromAvalonRoom(client, payload.roomCode, userId);
   }
 
   /**
@@ -247,13 +250,13 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     const userId = client.data.userId;
 
-    const player = await this.roomService.getPlayer(payload.roomCode, userId);
-    if (!player) {
-      client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
-      return;
-    }
-
     try {
+      const player = await this.roomService.getPlayer(payload.roomCode, userId);
+      if (!player) {
+        client.emit('avalon:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '你不在这个房间中' });
+        return;
+      }
+
       const result = await this.avalonService.beginGame(payload.roomCode, userId);
       if ('error' in result) {
         client.emit('avalon:error', { code: WsErrorCode.ROOM_ERROR, message: result.error });
@@ -261,11 +264,9 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       }
 
       await this.broadcastGameState(payload.roomCode);
-
-      const state = await this.avalonService.getGameState(payload.roomCode);
       this.server.to(`avalon:${payload.roomCode}`).emit('avalon:phase-changed', {
-        phase: state?.phase,
-        round: state?.round,
+        phase: result.phase,
+        round: result.round,
       });
     } catch (error) {
       this.logger.error(`Error handling avalon:begin for user ${userId} room ${payload.roomCode}:`, error);
