@@ -34,7 +34,7 @@ import {
   assassinate as engineAssassinate,
   getLeaderId,
 } from './game-engine';
-import { getPlayerView, getTeamVoteView, getQuestActionView } from './visibility';
+import { getPlayerView } from './visibility';
 import { ROOM_HASH_TTL_SECONDS } from '../room/room.constants';
 
 const GAME_STATE_TTL = 3600 * 24; // 24小时，游戏结束后状态保留一段时间供复盘，到期自动清理
@@ -455,30 +455,6 @@ export class AvalonService {
         return { error: (error as Error).message };
       }
     });
-  }
-
-  /**
-   * 获取投票视图
-   */
-  async getTeamVoteView(
-    roomCode: string,
-    playerId: PlayerId,
-  ): Promise<Record<PlayerId, TeamVote | 'unknown'> | null> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return null;
-    return getTeamVoteView(state, playerId);
-  }
-
-  /**
-   * 获取任务行动视图
-   */
-  async getQuestActionView(
-    roomCode: string,
-    playerId: PlayerId,
-  ): Promise<{ successCount: number; failCount: number; totalRequired: number } | null> {
-    const state = await this.getGameState(roomCode);
-    if (!state) return null;
-    return getQuestActionView(state, playerId);
   }
 
   /**
