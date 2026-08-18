@@ -596,6 +596,7 @@ WebSocket 业务事件按用户限流：
 | --- | --- | --- |
 | `avalon:join` | `{ roomCode }` | 加入 Avalon 游戏房间，接收当前状态 |
 | `avalon:leave` | `{ roomCode }` | 离开 Avalon 游戏房间 |
+| `avalon:begin` | `{ roomCode }` | 房主确认身份揭示结束，进入组队阶段 |
 | `avalon:propose-team` | `{ roomCode, selectedPlayerIds }` | 队长提议任务队伍 |
 | `avalon:team-vote` | `{ roomCode, vote }` | 投票（approve/reject） |
 | `avalon:quest-action` | `{ roomCode, action }` | 执行任务（success/fail） |
