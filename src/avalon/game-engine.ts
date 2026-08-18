@@ -551,6 +551,25 @@ export function resolveQuest(
     // 好人完成3个任务，进入刺杀阶段。
     // 终局分支不再 round+1：第 5 轮定胜负时 round 会变成 6，
     // 之后 getPlayerView 构建 currentQuestConfig 会因 round 越界抛异常。
+    const hasAssassin = state.players.some((p) => p.role === 'Assassin');
+    if (!hasAssassin) {
+      // 本局没有刺客（例如通过 API 创建了 assassin:false 的房间）：
+      // 无人能执行刺杀，若照常进入 assassination 阶段会永久卡死。
+      // 直接判好人获胜——刺杀是好人达成 3 任务后邪恶的唯一翻盘手段，
+      // 没有刺客即相当于刺杀必然失败。
+      return {
+        result: questResult,
+        newState: {
+          ...state,
+          phase: 'finished',
+          goodScore: newGoodScore,
+          evilScore: newEvilScore,
+          questHistory: newHistory,
+          winner: 'good',
+          resultReason: 'three_success_quests',
+        },
+      };
+    }
     return {
       result: questResult,
       newState: {

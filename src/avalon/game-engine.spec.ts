@@ -620,6 +620,26 @@ describe('Game Engine', () => {
       expect(newState.phase).toBe('assassination');
     });
 
+    it('should end immediately with good winning when no assassin exists', () => {
+      // 无刺客配置（assassin:false）下好人达成 3 任务：无人可刺杀，
+      // 若照常进入 assassination 阶段会永久卡死，必须直接判好人获胜。
+      state.players = state.players.map((p) =>
+        p.role === 'Assassin' ? { ...p, role: 'Minion' } : p,
+      );
+      state.goodScore = 2;
+      state.questActions = {
+        p1: 'success',
+        p4: 'success',
+      };
+
+      const { newState } = resolveQuest(state);
+
+      expect(newState.goodScore).toBe(3);
+      expect(newState.phase).toBe('finished');
+      expect(newState.winner).toBe('good');
+      expect(newState.resultReason).toBe('three_success_quests');
+    });
+
     it('should throw error if not in quest_action phase (double-resolve guard)', () => {
       state.phase = 'team_building';
       state.questActions = {
