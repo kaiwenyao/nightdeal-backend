@@ -83,7 +83,13 @@ export class StorageService {
     this.logger.log(`Avatar uploaded to OSS: ${result.name}`);
 
     const avatarUrlPrefix = this.configService.get<string>('AVATAR_URL_PREFIX')!;
-    return `${avatarUrlPrefix}${relativeKey}`;
+    // 缺尾斜杠时不能直接拼接：`https://host/avatars` + `uid/1.jpg` 会得到
+    // `https://host/avatarsuid/1.jpg`，该 URL 又会被 update-profile 的
+    // isAllowedAvatarUrl（会把前缀规范化为带尾斜杠）拒绝，导致头像永远存不上。
+    const normalizedPrefix = avatarUrlPrefix.endsWith('/')
+      ? avatarUrlPrefix
+      : `${avatarUrlPrefix}/`;
+    return `${normalizedPrefix}${relativeKey}`;
   }
 
   /**
