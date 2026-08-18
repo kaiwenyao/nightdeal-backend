@@ -3593,10 +3593,12 @@ export namespace Prisma {
 
   export type RoomPlayerAvgAggregateOutputType = {
     seatNo: number | null
+    presenceVersion: number | null
   }
 
   export type RoomPlayerSumAggregateOutputType = {
     seatNo: number | null
+    presenceVersion: number | null
   }
 
   export type RoomPlayerMinAggregateOutputType = {
@@ -3605,6 +3607,7 @@ export namespace Prisma {
     userId: string | null
     seatNo: number | null
     role: string | null
+    presenceVersion: number | null
     joinedAt: Date | null
   }
 
@@ -3614,6 +3617,7 @@ export namespace Prisma {
     userId: string | null
     seatNo: number | null
     role: string | null
+    presenceVersion: number | null
     joinedAt: Date | null
   }
 
@@ -3623,6 +3627,7 @@ export namespace Prisma {
     userId: number
     seatNo: number
     role: number
+    presenceVersion: number
     joinedAt: number
     _all: number
   }
@@ -3630,10 +3635,12 @@ export namespace Prisma {
 
   export type RoomPlayerAvgAggregateInputType = {
     seatNo?: true
+    presenceVersion?: true
   }
 
   export type RoomPlayerSumAggregateInputType = {
     seatNo?: true
+    presenceVersion?: true
   }
 
   export type RoomPlayerMinAggregateInputType = {
@@ -3642,6 +3649,7 @@ export namespace Prisma {
     userId?: true
     seatNo?: true
     role?: true
+    presenceVersion?: true
     joinedAt?: true
   }
 
@@ -3651,6 +3659,7 @@ export namespace Prisma {
     userId?: true
     seatNo?: true
     role?: true
+    presenceVersion?: true
     joinedAt?: true
   }
 
@@ -3660,6 +3669,7 @@ export namespace Prisma {
     userId?: true
     seatNo?: true
     role?: true
+    presenceVersion?: true
     joinedAt?: true
     _all?: true
   }
@@ -3756,6 +3766,7 @@ export namespace Prisma {
     userId: string
     seatNo: number
     role: string | null
+    presenceVersion: number
     joinedAt: Date
     _count: RoomPlayerCountAggregateOutputType | null
     _avg: RoomPlayerAvgAggregateOutputType | null
@@ -3784,6 +3795,7 @@ export namespace Prisma {
     userId?: boolean
     seatNo?: boolean
     role?: boolean
+    presenceVersion?: boolean
     joinedAt?: boolean
     room?: boolean | RoomDefaultArgs<ExtArgs>
     user?: boolean | UserDefaultArgs<ExtArgs>
@@ -3795,6 +3807,7 @@ export namespace Prisma {
     userId?: boolean
     seatNo?: boolean
     role?: boolean
+    presenceVersion?: boolean
     joinedAt?: boolean
     room?: boolean | RoomDefaultArgs<ExtArgs>
     user?: boolean | UserDefaultArgs<ExtArgs>
@@ -3806,6 +3819,7 @@ export namespace Prisma {
     userId?: boolean
     seatNo?: boolean
     role?: boolean
+    presenceVersion?: boolean
     joinedAt?: boolean
     room?: boolean | RoomDefaultArgs<ExtArgs>
     user?: boolean | UserDefaultArgs<ExtArgs>
@@ -3817,10 +3831,11 @@ export namespace Prisma {
     userId?: boolean
     seatNo?: boolean
     role?: boolean
+    presenceVersion?: boolean
     joinedAt?: boolean
   }
 
-  export type RoomPlayerOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "roomId" | "userId" | "seatNo" | "role" | "joinedAt", ExtArgs["result"]["roomPlayer"]>
+  export type RoomPlayerOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "roomId" | "userId" | "seatNo" | "role" | "presenceVersion" | "joinedAt", ExtArgs["result"]["roomPlayer"]>
   export type RoomPlayerInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     room?: boolean | RoomDefaultArgs<ExtArgs>
     user?: boolean | UserDefaultArgs<ExtArgs>
@@ -3846,6 +3861,7 @@ export namespace Prisma {
       userId: string
       seatNo: number
       role: string | null
+      presenceVersion: number
       joinedAt: Date
     }, ExtArgs["result"]["roomPlayer"]>
     composites: {}
@@ -4277,6 +4293,7 @@ export namespace Prisma {
     readonly userId: FieldRef<"RoomPlayer", 'String'>
     readonly seatNo: FieldRef<"RoomPlayer", 'Int'>
     readonly role: FieldRef<"RoomPlayer", 'String'>
+    readonly presenceVersion: FieldRef<"RoomPlayer", 'Int'>
     readonly joinedAt: FieldRef<"RoomPlayer", 'DateTime'>
   }
     
@@ -5804,6 +5821,7 @@ export namespace Prisma {
     userId: 'userId',
     seatNo: 'seatNo',
     role: 'role',
+    presenceVersion: 'presenceVersion',
     joinedAt: 'joinedAt'
   };
 
@@ -6134,6 +6152,7 @@ export namespace Prisma {
     userId?: StringFilter<"RoomPlayer"> | string
     seatNo?: IntFilter<"RoomPlayer"> | number
     role?: StringNullableFilter<"RoomPlayer"> | string | null
+    presenceVersion?: IntFilter<"RoomPlayer"> | number
     joinedAt?: DateTimeFilter<"RoomPlayer"> | Date | string
     room?: XOR<RoomScalarRelationFilter, RoomWhereInput>
     user?: XOR<UserScalarRelationFilter, UserWhereInput>
@@ -6145,6 +6164,7 @@ export namespace Prisma {
     userId?: SortOrder
     seatNo?: SortOrder
     role?: SortOrderInput | SortOrder
+    presenceVersion?: SortOrder
     joinedAt?: SortOrder
     room?: RoomOrderByWithRelationInput
     user?: UserOrderByWithRelationInput
@@ -6161,6 +6181,7 @@ export namespace Prisma {
     userId?: StringFilter<"RoomPlayer"> | string
     seatNo?: IntFilter<"RoomPlayer"> | number
     role?: StringNullableFilter<"RoomPlayer"> | string | null
+    presenceVersion?: IntFilter<"RoomPlayer"> | number
     joinedAt?: DateTimeFilter<"RoomPlayer"> | Date | string
     room?: XOR<RoomScalarRelationFilter, RoomWhereInput>
     user?: XOR<UserScalarRelationFilter, UserWhereInput>
@@ -6172,6 +6193,7 @@ export namespace Prisma {
     userId?: SortOrder
     seatNo?: SortOrder
     role?: SortOrderInput | SortOrder
+    presenceVersion?: SortOrder
     joinedAt?: SortOrder
     _count?: RoomPlayerCountOrderByAggregateInput
     _avg?: RoomPlayerAvgOrderByAggregateInput
@@ -6189,6 +6211,7 @@ export namespace Prisma {
     userId?: StringWithAggregatesFilter<"RoomPlayer"> | string
     seatNo?: IntWithAggregatesFilter<"RoomPlayer"> | number
     role?: StringNullableWithAggregatesFilter<"RoomPlayer"> | string | null
+    presenceVersion?: IntWithAggregatesFilter<"RoomPlayer"> | number
     joinedAt?: DateTimeWithAggregatesFilter<"RoomPlayer"> | Date | string
   }
 
@@ -6420,6 +6443,7 @@ export namespace Prisma {
     id?: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
     room: RoomCreateNestedOneWithoutPlayersInput
     user: UserCreateNestedOneWithoutRoomPlayersInput
@@ -6431,6 +6455,7 @@ export namespace Prisma {
     userId: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
   }
 
@@ -6438,6 +6463,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     room?: RoomUpdateOneRequiredWithoutPlayersNestedInput
     user?: UserUpdateOneRequiredWithoutRoomPlayersNestedInput
@@ -6449,6 +6475,7 @@ export namespace Prisma {
     userId?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
@@ -6458,6 +6485,7 @@ export namespace Prisma {
     userId: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
   }
 
@@ -6465,6 +6493,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
@@ -6474,6 +6503,7 @@ export namespace Prisma {
     userId?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
@@ -6861,11 +6891,13 @@ export namespace Prisma {
     userId?: SortOrder
     seatNo?: SortOrder
     role?: SortOrder
+    presenceVersion?: SortOrder
     joinedAt?: SortOrder
   }
 
   export type RoomPlayerAvgOrderByAggregateInput = {
     seatNo?: SortOrder
+    presenceVersion?: SortOrder
   }
 
   export type RoomPlayerMaxOrderByAggregateInput = {
@@ -6874,6 +6906,7 @@ export namespace Prisma {
     userId?: SortOrder
     seatNo?: SortOrder
     role?: SortOrder
+    presenceVersion?: SortOrder
     joinedAt?: SortOrder
   }
 
@@ -6883,11 +6916,13 @@ export namespace Prisma {
     userId?: SortOrder
     seatNo?: SortOrder
     role?: SortOrder
+    presenceVersion?: SortOrder
     joinedAt?: SortOrder
   }
 
   export type RoomPlayerSumOrderByAggregateInput = {
     seatNo?: SortOrder
+    presenceVersion?: SortOrder
   }
 
   export type StringNullableWithAggregatesFilter<$PrismaModel = never> = {
@@ -7488,6 +7523,7 @@ export namespace Prisma {
     id?: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
     room: RoomCreateNestedOneWithoutPlayersInput
   }
@@ -7497,6 +7533,7 @@ export namespace Prisma {
     roomId: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
   }
 
@@ -7567,6 +7604,7 @@ export namespace Prisma {
     userId?: StringFilter<"RoomPlayer"> | string
     seatNo?: IntFilter<"RoomPlayer"> | number
     role?: StringNullableFilter<"RoomPlayer"> | string | null
+    presenceVersion?: IntFilter<"RoomPlayer"> | number
     joinedAt?: DateTimeFilter<"RoomPlayer"> | Date | string
   }
 
@@ -7599,6 +7637,7 @@ export namespace Prisma {
     id?: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
     user: UserCreateNestedOneWithoutRoomPlayersInput
   }
@@ -7608,6 +7647,7 @@ export namespace Prisma {
     userId: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
   }
 
@@ -7936,6 +7976,7 @@ export namespace Prisma {
     roomId: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
   }
 
@@ -7983,6 +8024,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     room?: RoomUpdateOneRequiredWithoutPlayersNestedInput
   }
@@ -7992,6 +8034,7 @@ export namespace Prisma {
     roomId?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
@@ -8000,6 +8043,7 @@ export namespace Prisma {
     roomId?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
@@ -8008,6 +8052,7 @@ export namespace Prisma {
     userId: string
     seatNo: number
     role?: string | null
+    presenceVersion?: number
     joinedAt?: Date | string
   }
 
@@ -8022,6 +8067,7 @@ export namespace Prisma {
     id?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
     user?: UserUpdateOneRequiredWithoutRoomPlayersNestedInput
   }
@@ -8031,6 +8077,7 @@ export namespace Prisma {
     userId?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
@@ -8039,6 +8086,7 @@ export namespace Prisma {
     userId?: StringFieldUpdateOperationsInput | string
     seatNo?: IntFieldUpdateOperationsInput | number
     role?: NullableStringFieldUpdateOperationsInput | string | null
+    presenceVersion?: IntFieldUpdateOperationsInput | number
     joinedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 

@@ -148,6 +148,7 @@ exports.Prisma.RoomPlayerScalarFieldEnum = {
   userId: 'userId',
   seatNo: 'seatNo',
   role: 'role',
+  presenceVersion: 'presenceVersion',
   joinedAt: 'joinedAt'
 };
 

@@ -21,7 +21,15 @@ describe('AvalonService', () => {
       store.set(key, value);
       return Promise.resolve();
     }),
+    setWithLock: jest.fn((_lease: unknown, key: string, value: string) => {
+      store.set(key, value);
+      return Promise.resolve();
+    }),
     del: jest.fn((key: string) => {
+      store.delete(key);
+      return Promise.resolve();
+    }),
+    delWithLock: jest.fn((_lease: unknown, key: string) => {
       store.delete(key);
       return Promise.resolve();
     }),
@@ -30,6 +38,7 @@ describe('AvalonService', () => {
     hset: jest.fn().mockResolvedValue(undefined),
     hsetWithExpire: jest.fn().mockResolvedValue(undefined),
     hget: jest.fn().mockResolvedValue(null),
+    withLock: jest.fn().mockImplementation(async (key: string, _ttl: number, fn: (lease: unknown) => Promise<unknown>) => fn({ key, token: 'test-token' })),
   };
 
   const basePlayers = [
@@ -94,6 +103,12 @@ describe('AvalonService', () => {
         service.initializeGame('ABC123', basePlayers, config),
       ).rejects.toThrow('角色配置必须包含刺客(Assassin)');
       expect(await service.getGameState('ABC123')).toBeNull();
+    });
+
+    it('stores the database game generation in Redis state', async () => {
+      await service.initializeGame('ABC123', basePlayers, baseConfig, undefined, 'game-42');
+
+      expect((await service.getGameState('ABC123'))?.generationId).toBe('game-42');
     });
 
     it('uses precomputed assignments instead of generating new ones', async () => {
@@ -228,6 +243,47 @@ describe('AvalonService', () => {
       expect(successes).toHaveLength(1);
       expect(errors).toHaveLength(1);
       expect((errors[0] as { error: string }).error).toBe('当前不是投票阶段');
+    });
+  });
+
+  describe('generation validation', () => {
+    it('hides and rejects state from a non-active database generation', async () => {
+      await service.initializeGame('ABC123', basePlayers, baseConfig, undefined, 'game-old');
+      service.setGenerationValidator(async (_roomCode, generationId) => generationId === 'game-new');
+
+      expect(await service.getGameState('ABC123')).toBeNull();
+      await expect(service.beginGame('ABC123', 'u1')).resolves.toEqual({ error: '游戏不存在' });
+    });
+  });
+
+  describe('lock fencing', () => {
+    it('does not persist a transition after the Redis lease is lost', async () => {
+      await initGame();
+      mockRedis.setWithLock.mockRejectedValueOnce(new Error('LOCK_LOST'));
+
+      await expect(service.beginGame('ABC123', 'u1')).resolves.toEqual({ error: 'LOCK_LOST' });
+      expect((await service.getGameState('ABC123'))?.phase).toBe('role_reveal');
+    });
+
+    it('does not delete successor state after the Redis lease is lost', async () => {
+      await initGame();
+      mockRedis.delWithLock.mockRejectedValueOnce(new Error('LOCK_LOST'));
+
+      await expect(service.deleteGameState('ABC123')).rejects.toThrow('LOCK_LOST');
+      expect(await service.getGameState('ABC123')).not.toBeNull();
+    });
+  });
+
+  describe('activity tracking failures', () => {
+    it('does not reject a committed state transition when the activity touch fails', async () => {
+      await initGame();
+      mockRedis.hsetWithExpire.mockRejectedValueOnce(new Error('activity redis failure'));
+
+      await expect(service.beginGame('ABC123', 'u1')).resolves.toMatchObject({
+        success: true,
+        phase: 'team_building',
+      });
+      expect((await service.getGameState('ABC123'))?.phase).toBe('team_building');
     });
   });
 

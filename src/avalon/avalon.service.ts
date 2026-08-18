@@ -4,7 +4,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import { RedisService } from '../redis/redis.service';
+import { RedisLockLease, RedisService } from '../redis/redis.service';
 import {
   PlayerId,
   AvalonRole,
@@ -47,6 +47,8 @@ export class AvalonService {
   // 后到的 resolve 因引擎阶段校验失败而安全落空，不会双重计分。
   // 进程内锁，当前按单实例部署；多实例需要换成 Redis SET NX EX。
   private roomChains = new Map<string, Promise<unknown>>();
+  private roomLeases = new Map<string, RedisLockLease>();
+  private generationValidator: ((roomCode: string, generationId: string) => Promise<boolean>) | null = null;
 
   constructor(private redis: RedisService) {}
 
@@ -54,7 +56,16 @@ export class AvalonService {
    * 串行执行同一房间的写操作（进程内）。链结束后删掉 Map 条目，避免房间码常驻。
    */
   private withRoomLock<T>(roomCode: string, fn: () => Promise<T>): Promise<T> {
-    const chained = (this.roomChains.get(roomCode) ?? Promise.resolve()).then(fn);
+    const chained = (this.roomChains.get(roomCode) ?? Promise.resolve()).then(() =>
+      this.redis.withLock(`lock:avalon:${roomCode}:state`, 30_000, async (lease) => {
+        this.roomLeases.set(roomCode, lease);
+        try {
+          return await fn();
+        } finally {
+          this.roomLeases.delete(roomCode);
+        }
+      }),
+    );
     const tracked = chained.catch(() => undefined);
     this.roomChains.set(roomCode, tracked);
     void tracked.finally(() => {
@@ -65,6 +76,12 @@ export class AvalonService {
     return chained;
   }
 
+  setGenerationValidator(
+    validator: (roomCode: string, generationId: string) => Promise<boolean>,
+  ): void {
+    this.generationValidator = validator;
+  }
+
   // ==================== 游戏状态管理 ====================
 
   /**
@@ -73,14 +90,22 @@ export class AvalonService {
   async getGameState(roomCode: string): Promise<AvalonGameState | null> {
     const data = await this.redis.get(`avalon:${roomCode}:state`);
     if (!data) return null;
-    return JSON.parse(data) as AvalonGameState;
+    const state = JSON.parse(data) as AvalonGameState;
+    if (this.generationValidator) {
+      if (!state.generationId) return null;
+      if (!(await this.generationValidator(roomCode, state.generationId))) return null;
+    }
+    return state;
   }
 
   /**
    * 保存游戏状态
    */
   async saveGameState(roomCode: string, state: AvalonGameState): Promise<void> {
-    await this.redis.set(
+    const lease = this.roomLeases.get(roomCode);
+    if (!lease) throw new Error('Avalon state write attempted without room lock');
+    await this.redis.setWithLock(
+      lease,
       `avalon:${roomCode}:state`,
       JSON.stringify(state),
       GAME_STATE_TTL,
@@ -92,12 +117,18 @@ export class AvalonService {
     // while players are mid-game and be cascade-deleted along with its state.
     // Renew the TTL as well: a bare hset on an already-expired key recreates it
     // with no expiry at all, leaking the hash until the room is deleted.
-    await this.redis.hsetWithExpire(
-      `room:${roomCode}`,
-      'lastActiveAt',
-      Date.now().toString(),
-      ROOM_HASH_TTL_SECONDS,
-    );
+    try {
+      await this.redis.hsetWithExpire(
+        `room:${roomCode}`,
+        'lastActiveAt',
+        Date.now().toString(),
+        ROOM_HASH_TTL_SECONDS,
+      );
+    } catch (error) {
+      // The game-state SET above is authoritative. A secondary activity touch
+      // must not turn a committed vote/action into a client-visible failure.
+      this.logger.warn(`Failed to touch room activity for ${roomCode}: ${error}`);
+    }
   }
 
   /**
@@ -105,7 +136,9 @@ export class AvalonService {
    */
   async deleteGameState(roomCode: string): Promise<void> {
     return this.withRoomLock(roomCode, async () => {
-      await this.redis.del(`avalon:${roomCode}:state`);
+      const lease = this.roomLeases.get(roomCode);
+      if (!lease) throw new Error('Avalon state delete attempted without room lock');
+      await this.redis.delWithLock(lease, `avalon:${roomCode}:state`);
     });
   }
 
@@ -125,6 +158,7 @@ export class AvalonService {
     players: { seatNo: number; userId: string; name: string; isHost: boolean }[],
     config: AvalonGameConfig,
     precomputedAssignments?: { userId: string; role: AvalonRole }[],
+    generationId = 'legacy',
   ): Promise<Map<PlayerId, { role: AvalonRole; faction: Faction }>> {
     return this.withRoomLock(roomCode, async () => {
       let assignments: { seatNo: number; userId: string; role: AvalonRole; faction: Faction }[];
@@ -180,7 +214,10 @@ export class AvalonService {
       });
 
       // 创建初始状态
-      const state = createInitialState(roomCode, avalonPlayers, config);
+      const state = {
+        ...createInitialState(roomCode, avalonPlayers, config),
+        generationId,
+      };
 
       // 找到刺客和梅林
       const assassin = avalonPlayers.find(p => p.role === 'Assassin');
@@ -207,6 +244,20 @@ export class AvalonService {
 
       this.logger.log(`Game initialized for room ${roomCode}: ${players.length} players`);
       return roleAssignments;
+    });
+  }
+
+  async updateHost(roomCode: string, hostId: PlayerId): Promise<void> {
+    return this.withRoomLock(roomCode, async () => {
+      const state = await this.getGameState(roomCode);
+      if (!state) return;
+      if (!state.players.some((player) => player.id === hostId)) {
+        throw new Error('新房主不在本局游戏中');
+      }
+      await this.saveGameState(roomCode, {
+        ...state,
+        players: state.players.map((player) => ({ ...player, isHost: player.id === hostId })),
+      });
     });
   }
 

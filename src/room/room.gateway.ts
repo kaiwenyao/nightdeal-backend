@@ -9,8 +9,8 @@ import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 import { WsErrorCode } from '../common/constants/ws-error-codes';
 import { RedisService } from '../redis/redis.service';
 import { wsCorsOrigin } from '../common/cors-origin';
+import { PLAYER_OFFLINE_GRACE_MS } from './room.constants';
 
-const OFFLINE_TIMEOUT_MS = 5 * 60 * 1000;
 const WS_RATE_LIMIT_WINDOW_MS = 1000;
 const WS_RATE_LIMIT_MAX = 10;
 
@@ -107,7 +107,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
     const userId = client.data.userId;
 
-    const room = await this.roomService.getRoom(payload.roomCode);
+    let room = await this.roomService.getRoom(payload.roomCode);
     if (!room) {
       client.emit('room:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '房间不存在' });
       return;
@@ -115,26 +115,34 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
     const existingPlayer = await this.roomService.getPlayer(payload.roomCode, userId);
     if (existingPlayer) {
-      client.join(payload.roomCode);
-
-      const isOffline = await this.roomService.isPlayerOffline(payload.roomCode, userId);
-      if (isOffline) {
-        // Cancel pending offline cleanup timeout since the player reconnected
-        this.clearOfflineTimeout(userId, payload.roomCode);
-        await this.roomService.markPlayerOnline(payload.roomCode, userId);
-        await this.broadcastRoomState(payload.roomCode);
-        if (room.status === 'PLAYING' && existingPlayer.role) {
-          client.emit('room:started', { yourRole: existingPlayer.role, gameType: room.gameType });
+      const wasOffline = await this.roomService.isPlayerOffline(payload.roomCode, userId);
+      const confirmed = await this.roomService.markPlayerOnline(payload.roomCode, userId);
+      if (confirmed) {
+        if (wasOffline) this.clearOfflineTimeout(userId, payload.roomCode);
+        client.join(payload.roomCode);
+        const stillMember = await this.roomService.getPlayer(payload.roomCode, userId);
+        if (!stillMember) {
+          client.leave(payload.roomCode);
+          client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '房间成员状态已变更，请重新加入' });
+          return;
         }
-        this.server.to(payload.roomCode).emit('room:reconnected', { userId });
+        await this.broadcastRoomState(payload.roomCode);
+        if (room.status === 'PLAYING' && stillMember.role) {
+          client.emit('room:started', { yourRole: stillMember.role, gameType: room.gameType });
+        }
+        if (wasOffline) {
+          this.server.to(payload.roomCode).emit('room:reconnected', { userId });
+        }
         return;
       }
 
-      await this.broadcastRoomState(payload.roomCode);
-      if (room.status === 'PLAYING' && existingPlayer.role) {
-        client.emit('room:started', { yourRole: existingPlayer.role, gameType: room.gameType });
+      // Timed cleanup won the presence-version CAS. Do not subscribe a stale
+      // membership; continue through the ordinary fresh-join path if possible.
+      room = await this.roomService.getRoom(payload.roomCode);
+      if (!room) {
+        client.emit('room:error', { code: WsErrorCode.ROOM_NOT_FOUND, message: '房间不存在' });
+        return;
       }
-      return;
     }
 
     if (room.status === 'PLAYING') {
@@ -238,6 +246,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
   }
 
+  private async restoreConcurrentMembership(roomCode: string, userId: string): Promise<boolean> {
+    if (!(await this.roomService.getPlayer(roomCode, userId))) return false;
+    this.server.in('user:' + userId).socketsJoin(roomCode);
+    return true;
+  }
+
   /**
    * After DB kick succeeds (via WebSocket or HTTP): notify kicked sockets,
    * broadcast player-left + room state to remaining clients.
@@ -250,6 +264,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       message: '你已被房主踢出房间',
     });
     this.server.in('user:' + targetUserId).socketsLeave(roomCode);
+    if (await this.restoreConcurrentMembership(roomCode, targetUserId)) {
+      await this.broadcastRoomState(roomCode);
+      return;
+    }
 
     const playerCount = await this.roomService.getPlayerCount(roomCode);
     this.server.to(roomCode).emit('room:player-left', {
@@ -257,6 +275,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       playerCount,
     });
 
+    await this.broadcastRoomState(roomCode);
+  }
+
+  async notifyClientsAfterOffline(roomCode: string, userId: string, evict = true): Promise<void> {
+    if (evict) this.evictUserFromRoom(userId, roomCode);
+    this.server.to(roomCode).emit('room:offline', { userId });
     await this.broadcastRoomState(roomCode);
   }
 
@@ -268,6 +292,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   ): Promise<void> {
     if (opts?.evict !== false) {
       this.evictUserFromRoom(userId, roomCode);
+    }
+    if (await this.restoreConcurrentMembership(roomCode, userId)) {
+      await this.broadcastRoomState(roomCode);
+      return;
     }
     const playerCount = await this.roomService.getPlayerCount(roomCode);
     this.server.to(roomCode).emit('room:player-left', {
@@ -296,7 +324,15 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       return;
     }
 
-    await this.roomService.leaveRoom(payload.roomCode, userId);
+    const outcome = await this.roomService.leaveRoom(payload.roomCode, userId);
+    if (outcome === 'offline') {
+      await this.notifyClientsAfterOffline(payload.roomCode, userId);
+      return;
+    }
+    if (outcome === 'not_found') {
+      client.emit('room:error', { code: WsErrorCode.ROOM_ERROR, message: '你不在该房间中' });
+      return;
+    }
 
     await this.notifyClientsAfterLeave(payload.roomCode, userId);
   }
@@ -435,35 +471,23 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
       for (const roomCode of rooms) {
         await this.roomService.markPlayerOffline(roomCode, userId);
-        this.server.to(roomCode).emit('room:offline', { userId });
-        // Propagate a possible in-game host transfer triggered by markPlayerOffline.
-        await this.broadcastRoomState(roomCode);
+        await this.notifyClientsAfterOffline(roomCode, userId, false);
 
         const timeout = setTimeout(async () => {
           try {
-            this.clearOfflineTimeout(userId, roomCode);
-            // Re-check: if the player reconnected and the offline marker was
-            // cleared by handleJoin(), skip cleanup to avoid a race condition.
-            const stillOffline = await this.roomService.isPlayerOffline(roomCode, userId);
-            if (!stillOffline) {
-              return;
+            this.clearOfflineTimeout(userId, roomCode, timeout);
+            // Reconnect and cleanup share one room-wide presence lock, so the
+            // marker check and destructive leave are one atomic decision.
+            const outcome = await this.roomService.cleanupOfflinePlayer(roomCode, userId);
+            if (outcome === 'removed') {
+              await this.notifyClientsAfterLeave(roomCode, userId, { evict: false });
+            } else if (outcome === 'offline') {
+              await this.notifyClientsAfterOffline(roomCode, userId, false);
             }
-            const room = await this.roomService.getRoom(roomCode);
-            if (room && room.status === 'PLAYING') {
-              return;
-            }
-            // Re-check once more before the destructive leaveRoom():
-            // the player may have reconnected while getRoom() was awaited.
-            const stillOfflineBeforeLeave = await this.roomService.isPlayerOffline(roomCode, userId);
-            if (!stillOfflineBeforeLeave) {
-              return;
-            }
-            await this.roomService.leaveRoom(roomCode, userId);
-            await this.notifyClientsAfterLeave(roomCode, userId, { evict: false });
           } catch (error) {
             this.logger.error(`Error cleaning up offline player ${userId} from room ${roomCode}:`, error);
           }
-        }, OFFLINE_TIMEOUT_MS);
+        }, PLAYER_OFFLINE_GRACE_MS);
 
         this.setOfflineTimeout(userId, roomCode, timeout);
       }
@@ -473,6 +497,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   }
 
   private setOfflineTimeout(userId: string, roomCode: string, timeout: NodeJS.Timeout): void {
+    this.clearOfflineTimeout(userId, roomCode);
     let userMap = this.offlineTimeouts.get(userId);
     if (!userMap) {
       userMap = new Map();
@@ -481,11 +506,15 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     userMap.set(roomCode, timeout);
   }
 
-  private clearOfflineTimeout(userId: string, roomCode: string): void {
+  private clearOfflineTimeout(
+    userId: string,
+    roomCode: string,
+    expected?: NodeJS.Timeout,
+  ): void {
     const userMap = this.offlineTimeouts.get(userId);
     if (!userMap) return;
     const timeout = userMap.get(roomCode);
-    if (timeout) {
+    if (timeout && (!expected || timeout === expected)) {
       clearTimeout(timeout);
       userMap.delete(roomCode);
       if (userMap.size === 0) {

@@ -1,6 +1,12 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { randomUUID } from 'node:crypto';
+
+export interface RedisLockLease {
+  key: string;
+  token: string;
+}
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -44,6 +50,101 @@ export class RedisService implements OnModuleDestroy {
     } else {
       await this.client.set(key, value);
     }
+  }
+
+  /**
+   * Run one short cross-instance critical section under a token-owned Redis lock.
+   * The Lua release prevents an expired lock owner from deleting a newer owner's lock.
+   */
+  async withLock<T>(key: string, ttlMs: number, fn: (lease: RedisLockLease) => Promise<T>): Promise<T> {
+    const token = randomUUID();
+    let acquired: 'OK' | null = null;
+    for (let attempt = 0; attempt < 40 && acquired !== 'OK'; attempt++) {
+      acquired = await this.client.set(key, token, 'PX', ttlMs, 'NX');
+      if (acquired !== 'OK') {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (acquired !== 'OK') throw new Error('LOCK_BUSY');
+
+    const renewTimer = setInterval(() => {
+      void this.client.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
+        1,
+        key,
+        token,
+        ttlMs,
+      ).catch((error) => this.logger.error(`Failed to renew lock ${key}: ${error}`));
+    }, Math.max(1000, Math.floor(ttlMs / 3)));
+    renewTimer.unref();
+
+    try {
+      return await fn({ key, token });
+    } finally {
+      clearInterval(renewTimer);
+      try {
+        await this.client.eval(
+          "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+          1,
+          key,
+          token,
+        );
+      } catch (error) {
+        // Never mask the lifecycle operation's authoritative result. The lock
+        // has a TTL and will self-release if Redis is temporarily unavailable.
+        this.logger.error(`Failed to release lock ${key}: ${error}`);
+      }
+    }
+  }
+
+  /** Atomically write a value only while the caller still owns its lease. */
+  async setWithLock(
+    lease: RedisLockLease,
+    key: string,
+    value: string,
+    expirySeconds?: number,
+  ): Promise<void> {
+    const written = await this.client.eval(
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end\nif tonumber(ARGV[3]) > 0 then redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3]) else redis.call('set', KEYS[2], ARGV[2]) end\nreturn 1",
+      2,
+      lease.key,
+      key,
+      lease.token,
+      value,
+      expirySeconds ?? 0,
+    );
+    if (Number(written) !== 1) throw new Error('LOCK_LOST');
+  }
+
+  async delWithLock(lease: RedisLockLease, key: string): Promise<void> {
+    const deleted = await this.client.eval(
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return -1 end\nreturn redis.call('del', KEYS[2])",
+      2,
+      lease.key,
+      key,
+      lease.token,
+    );
+    if (Number(deleted) < 0) throw new Error('LOCK_LOST');
+  }
+
+  /** Delete JSON state only when both lease ownership and generation match. */
+  async delJsonFieldWithLock(
+    lease: RedisLockLease,
+    key: string,
+    field: string,
+    expected: string,
+  ): Promise<boolean> {
+    const deleted = await this.client.eval(
+      "if redis.call('get', KEYS[1]) ~= ARGV[1] then return -1 end\nlocal value = redis.call('get', KEYS[2])\nif not value then return 0 end\nlocal ok, decoded = pcall(cjson.decode, value)\nif not ok or tostring(decoded[ARGV[2]]) ~= ARGV[3] then return 0 end\nreturn redis.call('del', KEYS[2])",
+      2,
+      lease.key,
+      key,
+      lease.token,
+      field,
+      expected,
+    );
+    if (Number(deleted) < 0) throw new Error('LOCK_LOST');
+    return Number(deleted) === 1;
   }
 
   async del(key: string): Promise<void> {
