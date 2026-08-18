@@ -408,12 +408,21 @@ export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     // 广播新状态
     await this.broadcastGameState(roomCode);
 
-    // 根据结果通知阶段变化
-    if (result.result.approved) {
+    // 连续 5 次否决时引擎直接判负（phase='finished'，evil 因 five_rejected_teams 获胜）。
+    // 此时不能再广播回 team_building（会把终局状态覆盖成重新组队，客户端 UI 卡在
+    // 进行中画面，也不会收到 game-finished）；与 handleQuestComplete 一样发终局事件。
+    if (state?.phase === 'finished') {
+      this.server.to(`avalon:${roomCode}`).emit('avalon:game-finished', {
+        winner: state.winner,
+        reason: state.resultReason,
+      });
+    } else if (result.result.approved) {
+      // 审核通过，进入任务执行阶段
       this.server.to(`avalon:${roomCode}`).emit('avalon:phase-changed', {
         phase: 'quest_action',
       });
     } else {
+      // 投票否决，换队长重新组队
       this.server.to(`avalon:${roomCode}`).emit('avalon:phase-changed', {
         phase: 'team_building',
         rejectedCount: result.result.rejectedCount,

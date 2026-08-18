@@ -22,6 +22,9 @@ describe('AvalonGateway', () => {
     updateHost: jest.fn(),
     markPlayerOnline: jest.fn(),
     markPlayerOffline: jest.fn(),
+    submitTeamVote: jest.fn(),
+    isTeamVoteComplete: jest.fn(),
+    resolveTeamVote: jest.fn(),
     setGenerationValidator: jest.fn(),
   };
 
@@ -268,6 +271,110 @@ describe('AvalonGateway', () => {
       await gateway.handleLeaveGame(client as never, { roomCode: 'ABC123' });
 
       expect(mockAvalonService.markPlayerOffline).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleTeamVote', () => {
+    beforeEach(() => {
+      mockRoomService.getPlayer.mockResolvedValue({ userId: 'u1' });
+    });
+
+    it('emits avalon:game-finished instead of team_building when the 5th rejection ends the game', async () => {
+      // 第 5 次否决后引擎判负：state 已是 finished，绝不能再广播回 team_building
+      const finishedState = {
+        ...buildState(['u1', 'u2', 'u3', 'u4', 'u5']),
+        phase: 'finished' as const,
+        rejectedTeamVoteCount: 5,
+        winner: 'evil' as const,
+        resultReason: 'five_rejected_teams' as const,
+      };
+      mockAvalonService.submitTeamVote.mockResolvedValue({ success: true });
+      mockAvalonService.isTeamVoteComplete.mockResolvedValue(true);
+      mockAvalonService.resolveTeamVote.mockResolvedValue({
+        result: {
+          approved: false,
+          approvals: 0,
+          rejections: 5,
+          votes: {},
+          rejectedCount: 5,
+        },
+        views: new Map(),
+      });
+      // handleVoteComplete 重新读取状态以决定公开/匿名投票展示
+      mockAvalonService.getGameState.mockResolvedValue(finishedState);
+      mockAvalonService.getAllPlayerViews.mockResolvedValue(new Map());
+      const client = buildClient('u1');
+
+      await gateway.handleTeamVote(client as never, { roomCode: 'ABC123', vote: 'reject' });
+
+      // 终局：广播 game-finished，且绝不能广播回 team_building
+      expect(roomEmit).toHaveBeenCalledWith('avalon:game-finished', {
+        winner: 'evil',
+        reason: 'five_rejected_teams',
+      });
+      const phaseChangedCalls = roomEmit.mock.calls.filter(
+        (call) => call[0] === 'avalon:phase-changed',
+      );
+      expect(phaseChangedCalls).toEqual([]);
+    });
+
+    it('broadcasts phase-changed team_building on a normal rejection (not terminal)', async () => {
+      const teamBuildingState = {
+        ...buildState(['u1', 'u2', 'u3', 'u4', 'u5']),
+        phase: 'team_building' as const,
+        rejectedTeamVoteCount: 1,
+      };
+      mockAvalonService.submitTeamVote.mockResolvedValue({ success: true });
+      mockAvalonService.isTeamVoteComplete.mockResolvedValue(true);
+      mockAvalonService.resolveTeamVote.mockResolvedValue({
+        result: {
+          approved: false,
+          approvals: 2,
+          rejections: 3,
+          votes: {},
+          rejectedCount: 1,
+        },
+        views: new Map(),
+      });
+      mockAvalonService.getGameState.mockResolvedValue(teamBuildingState);
+      mockAvalonService.getAllPlayerViews.mockResolvedValue(new Map());
+      const client = buildClient('u1');
+
+      await gateway.handleTeamVote(client as never, { roomCode: 'ABC123', vote: 'reject' });
+
+      expect(roomEmit).toHaveBeenCalledWith('avalon:phase-changed', {
+        phase: 'team_building',
+        rejectedCount: 1,
+      });
+      expect(roomEmit).not.toHaveBeenCalledWith('avalon:game-finished', expect.anything());
+    });
+
+    it('broadcasts phase-changed quest_action when the team is approved', async () => {
+      const questActionState = {
+        ...buildState(['u1', 'u2', 'u3', 'u4', 'u5']),
+        phase: 'quest_action' as const,
+      };
+      mockAvalonService.submitTeamVote.mockResolvedValue({ success: true });
+      mockAvalonService.isTeamVoteComplete.mockResolvedValue(true);
+      mockAvalonService.resolveTeamVote.mockResolvedValue({
+        result: {
+          approved: true,
+          approvals: 3,
+          rejections: 2,
+          votes: {},
+          rejectedCount: 0,
+        },
+        views: new Map(),
+      });
+      mockAvalonService.getGameState.mockResolvedValue(questActionState);
+      mockAvalonService.getAllPlayerViews.mockResolvedValue(new Map());
+      const client = buildClient('u1');
+
+      await gateway.handleTeamVote(client as never, { roomCode: 'ABC123', vote: 'approve' });
+
+      expect(roomEmit).toHaveBeenCalledWith('avalon:phase-changed', {
+        phase: 'quest_action',
+      });
     });
   });
 
