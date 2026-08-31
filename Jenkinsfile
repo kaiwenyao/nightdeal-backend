@@ -1,9 +1,35 @@
+// =============================================================================
+// nightdeal-backend 持续集成流水线（测试 + 构建 + 镜像推送 + GitOps）
+// =============================================================================
+// 运行形态与 vimpaste 项目一致：每次构建由 Jenkins Kubernetes 插件在集群里
+// 临时创建一个 Pod 作为构建代理，构建结束后 Pod 销毁。Pod 里有三个业务容器：
+//
+//   nodejs —— 安装依赖、单元测试、后端构建（内含 Node.js 24）
+//   docker —— 构建并推送镜像（内含 docker CLI）
+//   gitops —— Git 操作与修改 YAML（内含 git）
+//
+// 插件还会自动注入一个 jnlp 容器负责和 Jenkins master 通信，无需在此声明。
+// 流水线的每个 steps 默认落在 jnlp 容器里，所以凡是要用 nodejs、docker 或
+// gitops 的步骤，都必须用 container('nodejs') / container('docker') /
+// container('gitops') 显式切换。
+//
+// 与 vimpaste 的差异：
+//   - NestJS 后端：测试前需要先 npx prisma generate 生成 Prisma Client；
+//     单测全部 mock 外部依赖（DB/Redis/OSS），不需要注入任何环境变量，
+//     且 package.json 里配置了 80% 的全局覆盖率门槛，跌破即构建失败。
+//   - 镜像推送到 ghcr.io/kaiwenyao/nightdeal-backend，标签只打 commit 短
+//     SHA，不打 latest，每个 commit 的镜像不可变，可随时按 SHA 回溯。
+//   - GitOps 目标清单是 k3s-home 仓库的 apps/nightdeal/deployment.yaml。
+// =============================================================================
 pipeline {
-    // 使用 Kubernetes Pod Template
     agent {
         kubernetes {
+            // Jenkins「系统管理 → 节点和云」中配置的 Kubernetes 云名称。
+            // 与 vimpaste 各流水线共用同一个云；若那里改了名字，这里要同步。
             cloud 'kubernetes'
 
+            // 直接在流水线里内联 Pod 定义，而不是引用 Jenkins UI 上预设的
+            // Pod Template，构建环境随代码一起版本化，可评审、可回滚。
             yaml '''
 apiVersion: v1
 kind: Pod
@@ -13,23 +39,25 @@ metadata:
 spec:
   containers:
     # -------------------------------------------------------
-    # 1. Node.js 容器（用于测试和构建）
+    # 容器一：nodejs —— 安装依赖、单元测试、后端构建
     # -------------------------------------------------------
-    - name: node
-      image: node:22-alpine
+    # command/args 覆写成 sleep 是 Jenkins K8s 插件的固定写法：容器必须保持
+    # 存活，等流水线用 container('nodejs') 进来执行命令。若不覆写，镜像跑完
+    # 默认入口就退出了，Pod 随即失败。
+    - name: nodejs
+      image: node:24-alpine
       command:
         - sleep
       args:
         - "9999999"
       tty: true
       workingDir: /home/jenkins/agent
-      volumeMounts:
-        - mountPath: /home/jenkins/agent/node_modules
-          name: node-modules-cache
 
     # -------------------------------------------------------
-    # 2. Docker 容器（用于构建和推送镜像）
+    # 容器二：docker —— 构建并推送镜像
     # -------------------------------------------------------
+    # 只装了 docker CLI，没有 Docker 守护进程；实际工作交给下面挂进来的
+    # 宿主机 socket 上的守护进程执行。
     - name: docker
       image: docker:latest
       command:
@@ -39,28 +67,32 @@ spec:
       tty: true
       workingDir: /home/jenkins/agent
       volumeMounts:
+        # docker CLI 通过这个 socket 指挥宿主节点的 Docker 守护进程干活
         - mountPath: /var/run/docker.sock
           name: docker-sock
 
     # -------------------------------------------------------
-    # 3. SSH 容器（用于远程部署）
-    # 使用 docker:latest 镜像，因为它基于 Alpine 且支持 apk
+    # 容器三：gitops —— Git 操作与修改 YAML
     # -------------------------------------------------------
-    - name: ssh
-      image: docker:latest
+    # 基础 alpine 镜像，启动时现场安装 git。它只做 Git 操作和改 YAML
+    # （GitOps），不需要操作 Docker 守护进程，因此不挂载
+    # /var/run/docker.sock。
+    - name: gitops
+      image: alpine:3.22
       command:
-        - sleep
+        - sh
+        - -c
       args:
-        - "9999999"
+        - apk add --no-cache git ca-certificates && sleep 9999999
       tty: true
       workingDir: /home/jenkins/agent
 
+  # -------------------------------------------------------
+  # 卷定义
+  # -------------------------------------------------------
   volumes:
-    # Node modules 缓存卷
-    - name: node-modules-cache
-      emptyDir: {}
-
-    # Docker Socket 挂载
+    # 宿主节点的 Docker 守护进程 socket。与 vimpaste 相同的做法；
+    # 该挂载的信任边界说明见相关流水线的 Jenkinsfile。
     - name: docker-sock
       hostPath:
         path: /var/run/docker.sock
@@ -68,297 +100,166 @@ spec:
         }
     }
 
-    parameters {
-        booleanParam(name: 'SONAR_ENABLED', defaultValue: false, description: '是否运行 SonarQube 代码质量分析（需要先安装 sonar-scanner）')
-        string(name: 'DOCKER_NETWORK', defaultValue: 'nightdeal_default', description: 'Docker 网络名称（服务器上 PostgreSQL/Redis 所在网络）。可通过 `docker network ls` 查看')
-    }
-
     stages {
         stage('1. 拉取代码') {
             steps {
                 checkout scm
-                container('node') {
-                    script {
-                        // 判断是否为「纯文档变更」（仅 *.md），是则跳过后续构建/测试/部署
-                        def docsOnly = false
-                        try {
-                            sh 'git config --global --add safe.directory "$(pwd)" || true'
-                            def changedFiles = sh(returnStdout: true, script: 'git diff --name-only HEAD~1 HEAD 2>/dev/null || true').trim()
-                            if (changedFiles) {
-                                def nonDocFiles = changedFiles.split('\n').findAll { it && !it.toLowerCase().endsWith('.md') }
-                                docsOnly = nonDocFiles.isEmpty()
-                                echo "本次变更文件: ${changedFiles.split('\n').size()} 个，其中非文档: ${nonDocFiles.size()} 个"
-                            }
-                        } catch (e) {
-                            echo "无法判断是否纯文档分支 (${e.message})，按常规流程执行全部 stages"
-                        }
-                        env.DOCS_ONLY = docsOnly ? 'true' : 'false'
-                        echo "DOCS_ONLY=${env.DOCS_ONLY}"
-                    }
-                }
             }
         }
 
         stage('2. 安装依赖') {
-            when {
-                expression { return env.DOCS_ONLY != 'true' }
-            }
             steps {
-                container('node') {
-                    script {
-                        withCredentials([
-                            file(credentialsId: 'nightdeal-prod-env', variable: 'APP_ENV_FILE')
-                        ]) {
-                            sh '''
-                                cp ${APP_ENV_FILE} .env
-                                npm ci
-                                npx prisma generate
-                            '''
-                        }
-                    }
+                container('nodejs') {
+                    echo '安装依赖...'
+                    sh 'npm ci'
+                    // Prisma Client 不随源码入库，安装后现场生成
+                    sh 'npx prisma generate'
                 }
             }
         }
 
         stage('3. 单元测试') {
-            when {
-                expression { return env.DOCS_ONLY != 'true' }
-            }
             steps {
-                container('node') {
-                    script {
-                        withCredentials([
-                            file(credentialsId: 'nightdeal-prod-env', variable: 'APP_ENV_FILE')
-                        ]) {
-                            sh '''
-                                cp ${APP_ENV_FILE} .env
-                                echo "已加载生产环境配置文件"
-                                npm test
-                            '''
-                        }
-                    }
+                container('nodejs') {
+                    // jest 全量单测 + 覆盖率统计。coverageThreshold 全局门槛
+                    // 80%（语句/分支/函数/行）写在 package.json 里，跌破会以
+                    // 非零退出码失败。单测全部 mock，无需任何 .env。
+                    // --silent 让 CI 日志只保留结果，不被逐个用例日志刷屏。
+                    echo '正在运行单元测试（Jest + 覆盖率门槛）...'
+                    sh 'npm test -- --coverage --silent'
                 }
             }
         }
 
-        stage('4. SonarQube 代码质量分析') {
-            when {
-                allOf {
-                    expression { return params.SONAR_ENABLED }
-                    expression { return env.DOCS_ONLY != 'true' }
-                }
-            }
+        stage('4. 构建项目') {
             steps {
-                container('node') {
-                    withSonarQubeEnv('sonar-server') {
-                        // 先生成覆盖率报告
-                        sh 'npm run test:cov'
-                        // 注意：需要在容器中安装 sonar-scanner 或使用 Jenkins SonarQube Scanner 插件
-                        // 如果使用 SonarQube Scanner 插件，取消下面的注释：
-                        // sh 'sonar-scanner'
-                        echo '⚠️  SonarQube 分析需要额外配置 sonar-scanner，请参考文档完成设置'
-                    }
+                container('nodejs') {
+                    // nest build：让 TypeScript 编译错误在独立阶段就暴露，
+                    // 比等到 docker build 内部才失败更快更清晰
+                    echo '构建后端项目（nest build）...'
+                    sh 'npm run build'
                 }
             }
         }
 
-        stage('5. 构建并推送 Docker 镜像') {
-            when {
-                allOf {
-                    not { changeRequest() }
-                    expression { return env.DOCS_ONLY != 'true' }
-                }
-            }
+        stage('5. 构建并推送镜像') {
+            // 不区分分支与 PR：任何构建（包括 PR 构建）都推送镜像，
+            // 便于在合入前就能拿 PR 的镜像到真实环境（如 k3s）验证。
+            // 标签是本次 commit 的短 SHA，各分支/PR 的镜像互不覆盖。
             steps {
                 container('docker') {
                     script {
-                        withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                            // 配置 Git 安全目录
+                        // GitHub Container Registry 登录凭据：与 vimpaste 共用
+                        // 专用凭据 ghcr-token（usernamePassword 类型）：用户名 =
+                        // kaiwenyao，密码 = 勾选了 write:packages 的 classic PAT。
+                        // 该凭据只用于推镜像，权限最小化；Git 操作走 k3s-home-write。
+                        withCredentials([usernamePassword(credentialsId: 'ghcr-token', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PASS')]) {
+                            // 工作区目录的属主与本容器内的当前用户不一致时，Git 会以
+                            // "dubious ownership" 为由拒绝操作。把目录标记为可信来放行，
+                            // 好让下面能读到 commit 号用作镜像标签。
                             sh '''
                                 git config --global --add safe.directory ${WORKSPACE} || true
                                 git config --global --add safe.directory "$(pwd)" || true
                             '''
 
                             def gitCommit = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
-                            def branchName = env.BRANCH_NAME ?: sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
 
-                            echo "当前分支: ${branchName}, Commit Hash: ${gitCommit}"
+                            // 镜像名 ghcr.io/<GitHub 用户名>/nightdeal-backend，标签 = commit 短 SHA。
+                            // ghcr 要求命名空间全小写，这里统一 toLowerCase 兜底。
+                            def image = "ghcr.io/${env.GHCR_USER.toLowerCase()}/nightdeal-backend:${gitCommit}"
 
-                            // 登录 Docker Hub
-                            sh '''
-                                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                            '''
+                            echo "准备推送镜像: ${image}"
 
-                            // 构建镜像
-                            def safeBranchName = branchName.replace("/", "-").replace("_", "-")
-                            def imageTag = "${safeBranchName}-${gitCommit}-j${env.BUILD_NUMBER}"
+                            // --password-stdin 避免令牌出现在进程命令行中
+                            sh 'echo $GHCR_PASS | docker login ghcr.io -u $GHCR_USER --password-stdin'
 
-                            sh """
-                                docker build -t ${DOCKER_USER}/nightdeal-backend:${imageTag} -f Dockerfile .
-                            """
+                            // 只打 commit 短 SHA 标签并推送；与 vimpaste 一致不打 latest
+                            sh "docker build -t ${image} ."
+                            sh "docker push ${image}"
 
-                            // 根据分支和标签推送不同版本
-                            if (env.TAG_NAME) {
-                                sh """
-                                    docker tag ${DOCKER_USER}/nightdeal-backend:${imageTag} ${DOCKER_USER}/nightdeal-backend:${env.TAG_NAME}
-                                    docker push ${DOCKER_USER}/nightdeal-backend:${env.TAG_NAME}
-                                    docker tag ${DOCKER_USER}/nightdeal-backend:${imageTag} ${DOCKER_USER}/nightdeal-backend:latest
-                                    docker push ${DOCKER_USER}/nightdeal-backend:latest
-                                """
-                            } else if (branchName == 'main' || branchName == 'master') {
-                                sh """
-                                    docker tag ${DOCKER_USER}/nightdeal-backend:${imageTag} ${DOCKER_USER}/nightdeal-backend:latest
-                                    docker push ${DOCKER_USER}/nightdeal-backend:${imageTag}
-                                    docker push ${DOCKER_USER}/nightdeal-backend:latest
-                                """
-                            } else {
-                                sh """
-                                    docker push ${DOCKER_USER}/nightdeal-backend:${imageTag}
-                                """
-                            }
+                            sh "docker logout ghcr.io"
                         }
                     }
                 }
             }
         }
 
-        stage('6. 部署到服务器') {
+        // GitOps 落地：把 k3s-home 中 nightdeal-backend 的镜像更新为本次构建的
+        // 镜像，并直接 commit + push 到 k3s-home main；清单已是当前镜像时跳过。
+        stage('6. 更新 GitOps 清单') {
             when {
-                allOf {
-                    branch 'main'
-                    not { changeRequest() }
-                    expression { return env.DOCS_ONLY != 'true' }
-                }
+                branch 'main'
             }
+
             steps {
-                // 使用 SSH 容器进行部署
-                container('ssh') {
-                    script {
-                        withCredentials([
-                            sshUserPrivateKey(credentialsId: 'server-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER'),
-                            string(credentialsId: 'server-host', variable: 'SERVER_HOST'),
-                            usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS'),
-                            file(credentialsId: 'nightdeal-prod-env', variable: 'APP_ENV_FILE')
-                        ]) {
-                            // 1. 安装必要工具
-                            sh '''
-                                apk add --no-cache openssh-client curl
-                            '''
+                container('gitops') {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'k3s-home-write',
+                            usernameVariable: 'GITOPS_USER',
+                            passwordVariable: 'GITOPS_TOKEN'
+                        )
+                    ]) {
+                        sh '''
+                            set -eu
 
-                            // 2. 准备环境变量文件
-                            sh "cp ${APP_ENV_FILE} app_env.tmp"
+                            rm -rf gitops-repo
 
-                            // 3. 使用 Groovy 生成部署脚本
-                            // 注意：globalPrefix('api') 在 main.ts 中设置，所以健康检查路径是 /api/health
-                            def dockerNetwork = params.DOCKER_NETWORK ?: 'nightdeal_default'
-                            def deployScript = """#!/bin/bash
-                                set -e
-                                mkdir -p /opt/nightdeal/config
-                                mv /tmp/nightdeal-prod.env.tmp /opt/nightdeal/config/nightdeal-prod.env
-                                chmod 600 /opt/nightdeal/config/nightdeal-prod.env
+                            cat > /tmp/git-askpass.sh <<'EOF'
+#!/bin/sh
+case "$1" in
+  *Username*) echo "$GITOPS_USER" ;;
+  *Password*) echo "$GITOPS_TOKEN" ;;
+esac
+EOF
 
-                                # 登录 Docker Hub（私有仓库需要认证才能 pull）
-                                echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                            chmod 700 /tmp/git-askpass.sh
+                            trap 'rm -f /tmp/git-askpass.sh' EXIT
 
-                                echo "正在拉取镜像: ${DOCKER_USER}/nightdeal-backend:latest"
-                                docker pull ${DOCKER_USER}/nightdeal-backend:latest
+                            GIT_ASKPASS=/tmp/git-askpass.sh \
+                            GIT_TERMINAL_PROMPT=0 \
+                            git clone https://github.com/kaiwenyao/k3s-home.git gitops-repo
 
-                                # 创建 Docker 网络（如果不存在）
-                                if ! docker network inspect ${dockerNetwork} > /dev/null 2>&1; then
-                                    echo "创建 Docker 网络: ${dockerNetwork}"
-                                    docker network create ${dockerNetwork}
-                                else
-                                    echo "Docker 网络已存在: ${dockerNetwork}"
-                                fi
+                            # gitops 容器与 docker 容器一样以 root 运行，而工作区
+                            # 属主是 jnlp 的 jenkins 用户：不先标记 safe.directory，
+                            # 下面的 git rev-parse 会因 dubious ownership 失败
+                            #（同 Stage 5 的处理）。
+                            git config --global --add safe.directory ${WORKSPACE} || true
+                            git config --global --add safe.directory "$(pwd)" || true
 
-                                # 保存旧镜像 ID 用于回滚
-                                OLD_IMAGE=\$(docker inspect --format='{{.Image}}' nightdeal-backend 2>/dev/null || echo "")
+                            NEW_IMAGE="ghcr.io/kaiwenyao/nightdeal-backend:$(git rev-parse --short HEAD)"
 
-                                # 停止并移除旧容器
-                                docker stop nightdeal-backend || true
-                                docker rm nightdeal-backend || true
+                            echo "部署镜像: $NEW_IMAGE"
 
-                                # 启动新容器（使用 docker run）
-                                docker run -d \\
-                                    --name nightdeal-backend \\
-                                    --network ${dockerNetwork} \\
-                                    --env-file /opt/nightdeal/config/nightdeal-prod.env \\
-                                    -p 3000:3000 \\
-                                    --restart unless-stopped \\
-                                    ${DOCKER_USER}/nightdeal-backend:latest
+                            # nightdeal 的 K8s 清单尚未入库 k3s-home（需要先规划
+                            # namespace / Postgres / Redis / Secret），届时提交
+                            # apps/nightdeal/deployment.yaml 后本 stage 自动生效。
+                            if [ ! -f gitops-repo/apps/nightdeal/deployment.yaml ]; then
+                                echo "k3s-home 中还没有 apps/nightdeal/deployment.yaml，跳过 GitOps 更新"
+                                echo "（后端上 k3s 时先提交该清单，其中 image 行需形如"
+                                echo " image: ghcr.io/kaiwenyao/nightdeal-backend:<commit>）"
+                                exit 0
+                            fi
 
-                                # 等待容器启动
-                                echo "等待容器启动..."
-                                sleep 5
+                            sed -i \
+                              "s#image: ghcr.io/kaiwenyao/nightdeal-backend:.*#image: ${NEW_IMAGE}#" \
+                              gitops-repo/apps/nightdeal/deployment.yaml
 
-                                # 健康检查函数（包含回滚逻辑）
-                                rollback_and_exit() {
-                                    echo "❌ \$1，正在回滚..."
-                                    # 先捕获日志，再停止容器
-                                    echo "--- 失败容器日志 ---"
-                                    docker logs --tail 50 nightdeal-backend 2>&1 || true
-                                    echo "--- 日志结束 ---"
-                                    docker stop nightdeal-backend || true
-                                    docker rm nightdeal-backend || true
-                                    if [ -n "\$OLD_IMAGE" ]; then
-                                        docker run -d \\
-                                            --name nightdeal-backend \\
-                                            --network ${dockerNetwork} \\
-                                            --env-file /opt/nightdeal/config/nightdeal-prod.env \\
-                                            -p 3000:3000 \\
-                                            --restart unless-stopped \\
-                                            \$OLD_IMAGE
-                                        echo "已回滚到旧版本"
-                                    fi
-                                    exit 1
-                                }
+                            if git -C gitops-repo diff --quiet -- apps/nightdeal/deployment.yaml; then
+                                echo "GitOps 清单已经是当前镜像，无需更新"
+                                exit 0
+                            fi
 
-                                # 检查容器是否启动
-                                if ! docker ps | grep -q nightdeal-backend; then
-                                    rollback_and_exit "容器启动失败"
-                                fi
+                            git -C gitops-repo config user.name "Jenkins"
+                            git -C gitops-repo config user.email "jenkins@nightdeal.local"
 
-                                echo "✅ 容器已启动"
+                            git -C gitops-repo add apps/nightdeal/deployment.yaml
+                            git -C gitops-repo commit -m "deploy(nightdeal-backend): ${NEW_IMAGE##*:}"
 
-                                # 检查应用是否响应（注意：路径是 /api/health 因为 main.ts 设置了 globalPrefix）
-                                for i in \$(seq 1 12); do
-                                    if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
-                                        echo "✅ 应用健康检查通过！部署成功！"
-                                        # 清理远程临时文件
-                                        rm -f /tmp/deploy.sh /tmp/nightdeal-prod.env.tmp
-                                        exit 0
-                                    fi
-                                    echo "等待应用就绪... (\$i/12)"
-                                    sleep 5
-                                done
-
-                                # 健康检查超时，回滚
-                                rollback_and_exit "应用启动超时"
-                            """
-
-                            // 4. 将脚本写入文件
-                            writeFile file: 'deploy.sh', text: deployScript
-
-                            // 5. 上传并执行
-                            sh """
-                                mkdir -p ~/.ssh
-                                cat "${SSH_KEY}" > ~/.ssh/deploy_key
-                                chmod 600 ~/.ssh/deploy_key
-
-                                # 上传环境变量文件
-                                scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no app_env.tmp ${SSH_USER}@${SERVER_HOST}:/tmp/nightdeal-prod.env.tmp
-
-                                # 上传部署脚本
-                                scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy.sh ${SSH_USER}@${SERVER_HOST}:/tmp/deploy.sh
-
-                                # 远程执行部署脚本
-                                echo "正在远程执行部署脚本..."
-                                ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${SSH_USER}@${SERVER_HOST} "bash /tmp/deploy.sh"
-
-                                # 清理本地临时文件
-                                rm -f ~/.ssh/deploy_key app_env.tmp deploy.sh
-                            """
-                        }
+                            GIT_ASKPASS=/tmp/git-askpass.sh \
+                            GIT_TERMINAL_PROMPT=0 \
+                            git -C gitops-repo push origin main
+                        '''
                     }
                 }
             }
@@ -367,33 +268,17 @@ spec:
 
     post {
         success {
-            // 仅在成功时清理本地镜像（说明已推送到 Registry，可以安全删除）
-            // 用 try/catch 兜底：万一 pod 已被回收，container() 会丢 node 上下文
-            script {
-                try {
-                    container('docker') {
-                        withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                            sh '''
-                                docker rmi "${DOCKER_USER}/nightdeal-backend:${BRANCH_NAME}-${GIT_COMMIT}-j${BUILD_NUMBER}" || true
-                                docker rmi "${DOCKER_USER}/nightdeal-backend:latest" || true
-                            '''
-                        }
-                    }
-                } catch (e) {
-                    echo "镜像清理跳过（pod 可能已回收）: ${e.message}"
-                }
-            }
-            echo '✅ Pipeline 执行成功！'
+            echo "✅ 测试、构建、镜像推送与 GitOps 更新成功"
         }
         failure {
-            echo '❌ Pipeline 执行失败，请检查日志。'
+            echo "❌ 测试、构建或推送失败，请检查日志"
         }
         always {
-            // cleanWs 也需要 node 上下文，pod 失败场景下用 try/catch 兜底，
+            // cleanWs 需要 node 上下文，pod 失败场景下用 try/catch 兜底，
             // 否则会抛 MissingContextVariableException 把已经 ABORTED 的构建再失败一次
             script {
                 try {
-                    cleanWs()
+                    cleanWs() // 清理工作空间
                 } catch (e) {
                     echo "工作区清理跳过（pod 可能已回收）: ${e.message}"
                 }
