@@ -359,5 +359,176 @@ describe('RoomController', () => {
       );
       expect(result).toEqual({ success: true });
     });
+
+    it('service error → 400 BadRequestException', async () => {
+      roomService.startGame.mockResolvedValue({ error: '仅房主可以开始游戏' });
+
+      await expect(controller.startGame(mockReq, 'abcdef')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(roomGateway.notifyClientsAfterStart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /rooms/:code/join - other service errors', () => {
+    it('generic join failure → 400 BadRequestException', async () => {
+      roomService.joinRoom.mockResolvedValue({ error: '房间已满' });
+
+      await expect(controller.joinRoom(mockReq, 'ABCDEF')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(roomGateway.notifyClientsAfterJoin).not.toHaveBeenCalled();
+    });
+
+    it('room vanishing before the detail read → 404 NotFoundException', async () => {
+      roomService.joinRoom.mockResolvedValue({
+        roomState: { room: mockRoom, players: mockPlayers },
+        player: mockPlayers[0],
+        playerCount: 1,
+      });
+      roomService.getRoom.mockResolvedValue(null);
+
+      await expect(controller.joinRoom(mockReq, 'ABCDEF')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(roomGateway.notifyClientsAfterJoin).toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /rooms/:code/leave - not_found outcome', () => {
+    it('membership lost mid-leave → 400 BadRequestException', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.leaveRoom.mockResolvedValue('not_found');
+
+      await expect(controller.leaveRoom(mockReq, 'ABCDEF')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(roomGateway.notifyClientsAfterLeave).not.toHaveBeenCalled();
+      expect(roomGateway.notifyClientsAfterOffline).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PUT /rooms/:code/settings', () => {
+    it('routes through the same update path as PATCH', async () => {
+      roomService.updateRoomSettings.mockResolvedValue(mockRoom);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      const result = await controller.putRoomSettings(mockReq, 'abcdef', { maxPlayers: 6 });
+
+      expect(roomService.updateRoomSettings).toHaveBeenCalledWith(
+        'ABCDEF',
+        'user-1',
+        { maxPlayers: 6, roleConfig: undefined, isRandomSeat: undefined },
+      );
+      expect(roomGateway.notifyClientsAfterSettingsUpdate).toHaveBeenCalledWith(
+        'ABCDEF',
+        mockRoom.maxPlayers,
+        mockRoom.roleConfig,
+        mockRoom.isRandomSeat,
+      );
+      expect(result.code).toBe('ABCDEF');
+    });
+
+    it('service error → 400 BadRequestException', async () => {
+      roomService.updateRoomSettings.mockResolvedValue({ error: '角色配置格式无效' });
+
+      await expect(
+        controller.putRoomSettings(mockReq, 'ABCDEF', { maxPlayers: 6 }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('GET /rooms/:code/my-role', () => {
+    it('returns role and seat for a member while the game is playing', async () => {
+      roomService.getRoom.mockResolvedValue({ ...mockRoom, status: 'PLAYING' });
+      roomService.getPlayer.mockResolvedValue({ ...mockPlayers[0], role: '梅林' });
+
+      const result = await controller.getMyRole(mockReq, 'abcdef');
+
+      expect(roomService.getRoom).toHaveBeenCalledWith('ABCDEF');
+      expect(result).toEqual({ role: '梅林', seatNo: 1 });
+    });
+
+    it('room not found → 404 NotFoundException', async () => {
+      roomService.getRoom.mockResolvedValue(null);
+
+      await expect(controller.getMyRole(mockReq, 'NOTEXIST')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('game not started → 403 ForbiddenException', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom); // status WAITING
+
+      await expect(controller.getMyRole(mockReq, 'ABCDEF')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(roomService.getPlayer).not.toHaveBeenCalled();
+    });
+
+    it('requester is not a member → 403 ForbiddenException', async () => {
+      roomService.getRoom.mockResolvedValue({ ...mockRoom, status: 'PLAYING' });
+      roomService.getPlayer.mockResolvedValue(null);
+
+      await expect(controller.getMyRole(mockReq, 'ABCDEF')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+  });
+
+  describe('GET /rooms/:code', () => {
+    it('returns room detail for a member', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      const result = await controller.getRoom({ user: { id: 'user-2' } }, 'abcdef');
+
+      expect(result.code).toBe('ABCDEF');
+      expect(result.host).toEqual({
+        id: 'user-1',
+        nickName: 'Host',
+        avatarUrl: 'https://example.com/1.png',
+      });
+    });
+
+    it('room not found → 404 NotFoundException', async () => {
+      roomService.getRoom.mockResolvedValue(null);
+
+      await expect(controller.getRoom(mockReq, 'NOTEXIST')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('non-member requester → 403 ForbiddenException', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayer.mockResolvedValue(null);
+
+      await expect(controller.getRoom({ user: { id: 'user-9' } }, 'ABCDEF')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('returns host: null and omits missing joinedAt when rows are incomplete', async () => {
+      const guestWithoutHostRow: PlayerInfo = {
+        id: 'player-2',
+        userId: 'user-2',
+        seatNo: 2,
+        isOnline: true,
+        joinedAt: null as any,
+        user: { id: 'user-2', nickName: 'Guest', avatarUrl: 'https://example.com/2.png' },
+      };
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayer.mockResolvedValue(null); // host without a player row is allowed
+      roomService.getPlayers.mockResolvedValue([guestWithoutHostRow]);
+
+      const result = await controller.getRoom(mockReq, 'ABCDEF');
+
+      expect(result.host).toBeNull();
+      expect(result.players).toHaveLength(1);
+      expect(result.players[0].joinedAt).toBeUndefined();
+    });
   });
 });

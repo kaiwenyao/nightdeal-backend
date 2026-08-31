@@ -124,5 +124,32 @@ describe('RoleAssigner', () => {
         expect(assignment.userId).toBe(players[index].userId);
       });
     });
+
+    it('should include minions, mordred and oberon while skipping disabled roles', () => {
+      const players = Array.from({ length: 6 }, (_, i) => ({
+        seatNo: i + 1,
+        userId: `user${i + 1}`,
+      }));
+      const config: AvalonRoleConfig = {
+        merlin: false,
+        percival: false,
+        mordred: true,
+        morgana: false,
+        oberon: true,
+        assassin: false,
+        loyalServants: 2,
+        minions: 2,
+      };
+
+      const result = assignRoles(players, config);
+
+      expect(result).toHaveLength(6);
+      expect(result.filter(r => r.role === '爪牙')).toHaveLength(2);
+      expect(result.filter(r => r.role === '莫德雷德')).toHaveLength(1);
+      expect(result.filter(r => r.role === '奥伯伦')).toHaveLength(1);
+      expect(result.filter(r => r.role === '忠臣')).toHaveLength(2);
+      expect(result.filter(r => r.team === 'evil')).toHaveLength(4);
+      expect(result.filter(r => r.team === 'good')).toHaveLength(2);
+    });
   });
 });

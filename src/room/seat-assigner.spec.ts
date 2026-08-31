@@ -78,4 +78,25 @@ describe('assignSeat', () => {
     // Act + Assert
     await expect(assignSeat(tx, 'room-1', 'u-new', 5)).rejects.toBe(dbError);
   });
+
+  it('rethrows P2002 errors that carry no target metadata', async () => {
+    // Arrange
+    const p2002 = Object.assign(new Error('unique'), { code: 'P2002' });
+    const tx = buildTx([], jest.fn().mockRejectedValue(p2002));
+
+    // Act + Assert
+    await expect(assignSeat(tx, 'room-1', 'u-new', 5)).rejects.toBe(p2002);
+  });
+
+  it('rethrows P2002 errors whose target is neither userId nor seatNo', async () => {
+    // Arrange
+    const p2002 = Object.assign(new Error('unique'), {
+      code: 'P2002',
+      meta: { target: ['roomId'] },
+    });
+    const tx = buildTx([], jest.fn().mockRejectedValue(p2002));
+
+    // Act + Assert
+    await expect(assignSeat(tx, 'room-1', 'u-new', 5)).rejects.toBe(p2002);
+  });
 });

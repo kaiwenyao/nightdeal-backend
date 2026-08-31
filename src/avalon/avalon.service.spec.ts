@@ -299,5 +299,297 @@ describe('AvalonService', () => {
       state = (await service.getGameState('ABC123'))!;
       expect(state.players.find(p => p.id === 'u2')!.isConnected).toBe(true);
     });
+
+    it('marks nothing when the game state is missing', async () => {
+      await expect(service.markPlayerOffline('NOGAME', 'u1')).resolves.toBeUndefined();
+      await expect(service.markPlayerOnline('NOGAME', 'u1')).resolves.toBeUndefined();
+    });
+  });
+
+  // ==================== 以下为追加的覆盖率测试（不影响以上原有用例） ====================
+
+  function seedState(roomCode: string, state: AvalonGameState): void {
+    store.set(`avalon:${roomCode}:state`, JSON.stringify(state));
+  }
+
+  function buildAssassinationState(): AvalonGameState {
+    return {
+      roomId: 'ABC123',
+      phase: 'assassination',
+      players: [
+        { id: 'm1', name: 'Merlin', seatNo: 1, isHost: true, isConnected: true, role: 'Merlin', faction: 'good' },
+        { id: 'p2', name: 'P2', seatNo: 2, isHost: false, isConnected: true, role: 'Percival', faction: 'good' },
+        { id: 'a1', name: 'Assassin', seatNo: 3, isHost: false, isConnected: true, role: 'Assassin', faction: 'evil' },
+        { id: 'p4', name: 'P4', seatNo: 4, isHost: false, isConnected: true, role: 'LoyalServant', faction: 'good' },
+        { id: 'p5', name: 'P5', seatNo: 5, isHost: false, isConnected: true, role: 'Morgana', faction: 'evil' },
+      ],
+      config: baseConfig,
+      leaderIndex: 0,
+      round: 5,
+      rejectedTeamVoteCount: 0,
+      proposedTeam: [],
+      teamVotes: {},
+      questActions: {},
+      questHistory: [],
+      goodScore: 3,
+      evilScore: 1,
+      assassinId: 'a1',
+      merlinId: 'm1',
+      generationId: 'legacy',
+    };
+  }
+
+  describe('initializeGame precomputed assignment validation', () => {
+    it('rejects when the precomputed assignment count does not match the player count', async () => {
+      const precomputed = [{ userId: 'u1', role: 'Merlin' as const }];
+
+      await expect(
+        service.initializeGame('ABC123', basePlayers, baseConfig, precomputed),
+      ).rejects.toThrow('预计算角色分配数量(1)与玩家数量(5)不匹配');
+      expect(await service.getGameState('ABC123')).toBeNull();
+    });
+
+    it('rejects when a player has no precomputed assignment', async () => {
+      // 数量匹配但 userId 重复（u2 的分配被替换成 u1）→ u2 缺少角色分配
+      const precomputed = basePlayers.map((p, i) => ({
+        userId: i === 1 ? 'u1' : p.userId,
+        role: 'LoyalServant' as const,
+      }));
+
+      await expect(
+        service.initializeGame('ABC123', basePlayers, baseConfig, precomputed),
+      ).rejects.toThrow('缺少玩家 u2 的角色分配');
+      expect(await service.getGameState('ABC123')).toBeNull();
+    });
+
+    it('leaves assassinId/merlinId unset when precomputed roles have neither', async () => {
+      // 预计算分配绕过 generateRoles 校验：没有刺客/梅林时终局字段不应被设置
+      const precomputed = [
+        { userId: 'u1', role: 'Percival' as const },
+        { userId: 'u2', role: 'LoyalServant' as const },
+        { userId: 'u3', role: 'LoyalServant' as const },
+        { userId: 'u4', role: 'LoyalServant' as const },
+        { userId: 'u5', role: 'Morgana' as const },
+      ];
+
+      await service.initializeGame('ABC123', basePlayers, baseConfig, precomputed);
+
+      const state = await service.getGameState('ABC123');
+      expect(state).not.toBeNull();
+      expect(state!.assassinId).toBeUndefined();
+      expect(state!.merlinId).toBeUndefined();
+    });
+  });
+
+  describe('direct state writes without a room lock', () => {
+    it('refuses saveGameState when no room lease is held', async () => {
+      const state = await initGame();
+
+      await expect(service.saveGameState('ABC123', state)).rejects.toThrow(
+        'Avalon state write attempted without room lock',
+      );
+    });
+  });
+
+  describe('deleteGameState', () => {
+    it('deletes the game state under the room lock', async () => {
+      await initGame();
+
+      await service.deleteGameState('ABC123');
+
+      expect(await service.getGameState('ABC123')).toBeNull();
+    });
+  });
+
+  describe('generation validation', () => {
+    it('hides legacy state without a generationId when a validator is configured', async () => {
+      await service.initializeGame('ABC123', basePlayers, baseConfig);
+      const state = JSON.parse(store.get('avalon:ABC123:state')!);
+      delete state.generationId;
+      seedState('ABC123', state);
+      service.setGenerationValidator(async () => true);
+
+      expect(await service.getGameState('ABC123')).toBeNull();
+    });
+
+    it('keeps state whose generationId the validator accepts', async () => {
+      await service.initializeGame('ABC123', basePlayers, baseConfig, undefined, 'game-new');
+      service.setGenerationValidator(async (_roomCode, generationId) => generationId === 'game-new');
+
+      const state = await service.getGameState('ABC123');
+
+      expect(state).not.toBeNull();
+      expect(state!.generationId).toBe('game-new');
+    });
+  });
+
+  describe('updateHost', () => {
+    it('transfers the host flag to the new host', async () => {
+      await initGame();
+
+      await service.updateHost('ABC123', 'u3');
+
+      const state = (await service.getGameState('ABC123'))!;
+      expect(state.players.find(p => p.id === 'u3')!.isHost).toBe(true);
+      expect(state.players.find(p => p.id === 'u1')!.isHost).toBe(false);
+    });
+
+    it('resolves without effect when the game state is missing', async () => {
+      await expect(service.updateHost('NOGAME', 'u1')).resolves.toBeUndefined();
+    });
+
+    it('rejects a new host who is not in the game', async () => {
+      await initGame();
+
+      await expect(service.updateHost('ABC123', 'uX')).rejects.toThrow('新房主不在本局游戏中');
+    });
+  });
+
+  describe('player views', () => {
+    it('returns the requesting player view', async () => {
+      await initGame();
+
+      const view = await service.getPlayerView('ABC123', 'u1');
+
+      expect(view).not.toBeNull();
+      expect(view!.myId).toBe('u1');
+      expect(view!.myRole).toBeDefined();
+      expect(view!.players).toHaveLength(5);
+    });
+
+    it('returns null when the game state is missing', async () => {
+      expect(await service.getPlayerView('NOGAME', 'u1')).toBeNull();
+    });
+
+    it('builds one view per player', async () => {
+      await initGame();
+
+      const views = await service.getAllPlayerViews('ABC123');
+
+      expect(views.size).toBe(5);
+      expect(views.get('u2')!.myId).toBe('u2');
+      expect(views.get('u2')!.myRole).toBeDefined();
+    });
+
+    it('returns an empty map when the game state is missing', async () => {
+      expect((await service.getAllPlayerViews('NOGAME')).size).toBe(0);
+    });
+  });
+
+  describe('action error mapping', () => {
+    it('maps engine rejections to { error } results for proposeTeam', async () => {
+      await initGame();
+      await service.beginGame('ABC123', 'u1');
+      const state = (await service.getGameState('ABC123'))!;
+      const notLeader = state.players[(state.leaderIndex + 1) % state.players.length].id;
+      const team = state.players.slice(0, 2).map(p => p.id);
+
+      await expect(service.proposeTeam('ABC123', notLeader, team)).resolves.toEqual({
+        error: '你不是当前队长',
+      });
+    });
+
+    it('maps engine rejections to { error } results for submitTeamVote', async () => {
+      await initGame();
+
+      await expect(service.submitTeamVote('ABC123', 'u1', 'approve')).resolves.toEqual({
+        error: '当前不是投票阶段',
+      });
+    });
+
+    it('maps engine rejections to { error } results for submitQuestAction', async () => {
+      await initGame();
+
+      await expect(service.submitQuestAction('ABC123', 'u1', 'success')).resolves.toEqual({
+        error: '当前不是任务执行阶段',
+      });
+    });
+
+    it('returns 游戏不存在 for every write when the game state is missing', async () => {
+      await expect(service.proposeTeam('NOGAME', 'u1', ['u1'])).resolves.toEqual({ error: '游戏不存在' });
+      await expect(service.submitTeamVote('NOGAME', 'u1', 'approve')).resolves.toEqual({ error: '游戏不存在' });
+      await expect(service.submitQuestAction('NOGAME', 'u1', 'success')).resolves.toEqual({ error: '游戏不存在' });
+      await expect(service.resolveTeamVote('NOGAME')).resolves.toEqual({ error: '游戏不存在' });
+      await expect(service.resolveQuest('NOGAME')).resolves.toEqual({ error: '游戏不存在' });
+      await expect(service.assassinate('NOGAME', 'a1', 'm1')).resolves.toEqual({ error: '游戏不存在' });
+      await expect(service.beginGame('NOGAME', 'u1')).resolves.toEqual({ error: '游戏不存在' });
+    });
+  });
+
+  describe('assassinate', () => {
+    it('resolves a successful assassination of Merlin', async () => {
+      seedState('ABC123', buildAssassinationState());
+
+      const result = await service.assassinate('ABC123', 'a1', 'm1');
+
+      expect('result' in result).toBe(true);
+      expect((result as { result: { winner: string } }).result.winner).toBe('evil');
+      const state = (await service.getGameState('ABC123'))!;
+      expect(state.phase).toBe('finished');
+      expect(state.winner).toBe('evil');
+      expect(state.assassinatedPlayerId).toBe('m1');
+    });
+
+    it('builds a view per player from the new state', async () => {
+      seedState('ABC123', buildAssassinationState());
+
+      const result = await service.assassinate('ABC123', 'a1', 'p2');
+
+      expect('result' in result).toBe(true);
+      expect((result as { result: { winner: string } }).result.winner).toBe('good');
+      expect((result as { views: Map<string, unknown> }).views.size).toBe(5);
+    });
+
+    it('maps engine rejections to { error } results', async () => {
+      seedState('ABC123', buildAssassinationState());
+
+      await expect(service.assassinate('ABC123', 'm1', 'a1')).resolves.toEqual({
+        error: '只有刺客可以执行刺杀',
+      });
+    });
+  });
+
+  describe('completion and leader queries', () => {
+    it('isTeamVoteComplete reflects vote progress', async () => {
+      const state = buildAssassinationState();
+      state.phase = 'team_voting';
+      seedState('ABC123', state);
+      expect(await service.isTeamVoteComplete('ABC123')).toBe(false);
+
+      state.teamVotes = { m1: 'approve', p2: 'approve', a1: 'approve', p4: 'reject', p5: 'approve' };
+      seedState('ABC123', state);
+      expect(await service.isTeamVoteComplete('ABC123')).toBe(true);
+    });
+
+    it('isTeamVoteComplete returns false when the game state is missing', async () => {
+      expect(await service.isTeamVoteComplete('NOGAME')).toBe(false);
+    });
+
+    it('isQuestComplete reflects submitted quest actions', async () => {
+      const state = buildAssassinationState();
+      state.phase = 'quest_action';
+      state.proposedTeam = ['m1', 'p2'];
+      seedState('ABC123', state);
+      expect(await service.isQuestComplete('ABC123')).toBe(false);
+
+      state.questActions = { m1: 'success', p2: 'success' };
+      seedState('ABC123', state);
+      expect(await service.isQuestComplete('ABC123')).toBe(true);
+    });
+
+    it('isQuestComplete returns false when the game state is missing', async () => {
+      expect(await service.isQuestComplete('NOGAME')).toBe(false);
+    });
+
+    it('getCurrentLeaderId returns the current leader', async () => {
+      const state = buildAssassinationState();
+      seedState('ABC123', state);
+
+      expect(await service.getCurrentLeaderId('ABC123')).toBe(state.players[state.leaderIndex].id);
+    });
+
+    it('getCurrentLeaderId returns null when the game state is missing', async () => {
+      expect(await service.getCurrentLeaderId('NOGAME')).toBeNull();
+    });
   });
 });

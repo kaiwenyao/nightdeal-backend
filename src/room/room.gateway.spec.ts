@@ -570,5 +570,462 @@ describe('RoomGateway', () => {
       );
       loggerSpy.mockRestore();
     });
+
+    it('returns early when the socket never completed authentication', async () => {
+      (mockClient as any).data = {};
+
+      await gateway.handleDisconnect(mockClient);
+
+      expect(mockServer.in).not.toHaveBeenCalled();
+      expect(roomService.getUserRooms).not.toHaveBeenCalled();
+    });
+
+    it('broadcasts a final player-left when the cleanup timer removes the player', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      roomService.getPlayer.mockResolvedValue(null);
+      roomService.getPlayerCount.mockResolvedValue(0);
+      roomService.cleanupOfflinePlayer.mockResolvedValue('removed');
+
+      await gateway.handleDisconnect(mockClient);
+      await jest.runAllTimersAsync();
+
+      expect(roomService.cleanupOfflinePlayer).toHaveBeenCalledWith('ABCDEF', 'user-2');
+      expect(mockServer.emit).toHaveBeenCalledWith('room:player-left', {
+        userId: 'user-2',
+        playerCount: 0,
+      });
+    });
+
+    it('logs and swallows errors thrown inside the cleanup timer', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      roomService.cleanupOfflinePlayer.mockRejectedValue(new Error('cleanup boom'));
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await gateway.handleDisconnect(mockClient);
+      await jest.runAllTimersAsync();
+
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Error cleaning up offline player user-2 from room ABCDEF'),
+        expect.any(Error),
+      );
+      loggerSpy.mockRestore();
+    });
+
+    it('keeps one cleanup timer per room for a user disconnected from several rooms', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF', 'XYZXYZ']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      roomService.cleanupOfflinePlayer.mockResolvedValue('skipped');
+
+      await gateway.handleDisconnect(mockClient);
+      await gateway.handleDisconnect(mockClient);
+
+      expect(jest.getTimerCount()).toBe(2);
+      expect(mockServer.emit).toHaveBeenCalledWith('room:offline', { userId: 'user-2' });
+
+      await jest.runAllTimersAsync();
+
+      expect(roomService.cleanupOfflinePlayer).toHaveBeenCalledWith('ABCDEF', 'user-2');
+      expect(roomService.cleanupOfflinePlayer).toHaveBeenCalledWith('XYZXYZ', 'user-2');
+    });
+
+    it('leaves another room cleanup timer untouched when a rejoin misses the map', async () => {
+      mockServer.fetchSockets.mockResolvedValue([]);
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF']);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      await gateway.handleDisconnect(mockClient);
+
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.isPlayerOffline.mockResolvedValue(true);
+      roomService.markPlayerOnline.mockResolvedValue(true);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'XYZXYZ' });
+
+      expect(jest.getTimerCount()).toBe(1);
+      expect(mockClient.join).toHaveBeenCalledWith('XYZXYZ');
+    });
+  });
+
+  describe('onModuleInit', () => {
+    it('registers itself as the room service events notifier', () => {
+      gateway.onModuleInit();
+
+      expect(roomService.setEventsNotifier).toHaveBeenCalledWith(gateway);
+    });
+  });
+
+  describe('handleConnection', () => {
+    it('authenticates via the handshake token, tags the socket and joins the per-user room', async () => {
+      await gateway.handleConnection(mockClient);
+
+      expect(authService.verifyToken).toHaveBeenCalledWith('valid-token');
+      expect(mockClient.data.userId).toBe('user-2');
+      expect(mockClient.join).toHaveBeenCalledWith('user:user-2');
+      expect(mockClient.disconnect).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a Bearer Authorization header token', async () => {
+      (mockClient as any).handshake = { auth: {}, headers: { authorization: 'Bearer header-token' } };
+
+      await gateway.handleConnection(mockClient);
+
+      expect(authService.verifyToken).toHaveBeenCalledWith('header-token');
+      expect(mockClient.join).toHaveBeenCalledWith('user:user-2');
+    });
+
+    it('accepts a raw Authorization header when handshake.auth is absent', async () => {
+      (mockClient as any).handshake = { headers: { authorization: 'raw-token' } };
+
+      await gateway.handleConnection(mockClient);
+
+      expect(authService.verifyToken).toHaveBeenCalledWith('raw-token');
+    });
+
+    it('ignores a blank auth token and uses the header instead', async () => {
+      (mockClient as any).handshake = {
+        auth: { token: '   ' },
+        headers: { authorization: 'Bearer header-token' },
+      };
+
+      await gateway.handleConnection(mockClient);
+
+      expect(authService.verifyToken).toHaveBeenCalledWith('header-token');
+    });
+
+    it('disconnects with UNAUTHORIZED when no token is present anywhere', async () => {
+      (mockClient as any).handshake = { auth: {} };
+
+      await gateway.handleConnection(mockClient);
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'UNAUTHORIZED',
+        message: '未登录',
+      });
+      expect(mockClient.disconnect).toHaveBeenCalled();
+      expect(mockClient.join).not.toHaveBeenCalled();
+      expect(authService.verifyToken).not.toHaveBeenCalled();
+    });
+
+    it('disconnects when token verification throws', async () => {
+      authService.verifyToken.mockRejectedValueOnce(new Error('malformed token'));
+
+      await gateway.handleConnection(mockClient);
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'UNAUTHORIZED',
+        message: '认证失败',
+      });
+      expect(mockClient.disconnect).toHaveBeenCalled();
+      expect(mockClient.join).not.toHaveBeenCalled();
+    });
+
+    it('disconnects when the token resolves to no user', async () => {
+      authService.verifyToken.mockResolvedValueOnce(null as any);
+
+      await gateway.handleConnection(mockClient);
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'UNAUTHORIZED',
+        message: '登录态失效',
+      });
+      expect(mockClient.disconnect).toHaveBeenCalled();
+      expect(mockClient.join).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rate limiting', () => {
+    it('rejects every room message type while the rate limit is exceeded', async () => {
+      redisService.incrWithExpireIfFirst.mockResolvedValue(11);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+      await gateway.handleKick(mockClient, { roomCode: 'ABCDEF', targetUserId: 'user-3' });
+      await gateway.handleStart(mockClient, { roomCode: 'ABCDEF' });
+      await gateway.handleEnd(mockClient, { roomCode: 'ABCDEF' });
+      await gateway.handleSettingsUpdate(mockClient, { roomCode: 'ABCDEF' });
+      await gateway.handlePlayerUpdate(mockClient, { nickName: '新昵称' });
+
+      expect(mockClient.emit).toHaveBeenCalledTimes(7);
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '请求过于频繁，请稍后再试',
+      });
+      expect(roomService.getRoom).not.toHaveBeenCalled();
+      expect(roomService.leaveRoom).not.toHaveBeenCalled();
+      expect(roomService.kickPlayer).not.toHaveBeenCalled();
+      expect(roomService.startGame).not.toHaveBeenCalled();
+      expect(roomService.endGame).not.toHaveBeenCalled();
+      expect(roomService.updateRoomSettings).not.toHaveBeenCalled();
+      expect(roomService.updatePlayerInfo).not.toHaveBeenCalled();
+    });
+
+    it('keys the rate limit by socket id when the socket has no user id', async () => {
+      (mockClient as any).data = {};
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.getPlayerCount.mockResolvedValue(1);
+
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(redisService.incrWithExpireIfFirst).toHaveBeenCalledWith('ws-rate:socket:socket-1', 1);
+    });
+
+    it('treats a Redis failure as rate-limited instead of opening the floodgates', async () => {
+      redisService.incrWithExpireIfFirst.mockRejectedValueOnce(new Error('redis down'));
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '请求过于频繁，请稍后再试',
+      });
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to check WebSocket rate limit for user:user-2'),
+        expect.any(Error),
+      );
+      loggerSpy.mockRestore();
+    });
+  });
+
+  describe('handleJoin - rejection paths', () => {
+    it('emits ROOM_NOT_FOUND when the room does not exist', async () => {
+      roomService.getRoom.mockResolvedValue(null);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'NOTFOUND' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_NOT_FOUND',
+        message: '房间不存在',
+      });
+      expect(roomService.joinRoom).not.toHaveBeenCalled();
+    });
+
+    it('leaves the socket and asks for a rejoin when membership vanished after confirmation', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayer
+        .mockResolvedValueOnce(mockPlayers[0])
+        .mockResolvedValue(null);
+      roomService.isPlayerOffline.mockResolvedValue(false);
+      roomService.markPlayerOnline.mockResolvedValue(true);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.join).toHaveBeenCalledWith('ABCDEF');
+      expect(mockClient.leave).toHaveBeenCalledWith('ABCDEF');
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '房间成员状态已变更，请重新加入',
+      });
+      expect(mockServer.emit).not.toHaveBeenCalled();
+    });
+
+    it('delivers the role to a reconnecting member once the game is playing', async () => {
+      const playingMember: PlayerInfo = { ...mockPlayers[0], role: '梅林' };
+      roomService.getRoom.mockResolvedValue({ ...mockRoom, status: 'PLAYING' });
+      roomService.getPlayer.mockResolvedValue(playingMember);
+      roomService.isPlayerOffline.mockResolvedValue(false);
+      roomService.markPlayerOnline.mockResolvedValue(true);
+      roomService.getPlayers.mockResolvedValue([playingMember]);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:started', {
+        yourRole: '梅林',
+        gameType: 'AVALON',
+      });
+    });
+
+    it('emits ROOM_NOT_FOUND when the room disappears after a lost presence race', async () => {
+      roomService.getRoom
+        .mockResolvedValueOnce(mockRoom)
+        .mockResolvedValueOnce(null);
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.isPlayerOffline.mockResolvedValue(true);
+      roomService.markPlayerOnline.mockResolvedValue(false);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_NOT_FOUND',
+        message: '房间不存在',
+      });
+      expect(roomService.joinRoom).not.toHaveBeenCalled();
+    });
+
+    it('emits ROOM_FULL when the room has no free seats', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayer.mockResolvedValue(null);
+      roomService.getPlayerCount.mockResolvedValue(mockRoom.maxPlayers);
+
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_FULL',
+        message: '房间已满',
+      });
+      expect(roomService.joinRoom).not.toHaveBeenCalled();
+    });
+
+    it('forwards joinRoom service errors to the client', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayer.mockResolvedValue(null);
+      roomService.getPlayerCount.mockResolvedValue(1);
+      roomService.joinRoom.mockResolvedValue({ error: '座位分配失败，请重试' });
+
+      await gateway.handleJoin(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.join).not.toHaveBeenCalled();
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '座位分配失败，请重试',
+      });
+    });
+  });
+
+  describe('notifyClientsAfterJoin', () => {
+    it('emits player-joined to the whole room when no socket is excluded', async () => {
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      await gateway.notifyClientsAfterJoin('ABCDEF', mockPlayers[0], 1);
+
+      expect(mockServer.to).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.except).not.toHaveBeenCalled();
+      expect(mockServer.emit).toHaveBeenCalledWith('room:player-joined', {
+        player: mockPlayers[0],
+        playerCount: 1,
+      });
+    });
+  });
+
+  describe('notifyClientsAfterKick', () => {
+    it('broadcasts state instead of player-left when the kicked player concurrently re-joined', async () => {
+      roomService.kickPlayer.mockResolvedValue({ success: true });
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+
+      await gateway.handleKick(mockClient, {
+        roomCode: 'ABCDEF',
+        targetUserId: 'user-3',
+      });
+
+      expect(mockServer.emit).toHaveBeenCalledWith('room:error', {
+        code: 'KICKED',
+        message: '你已被房主踢出房间',
+      });
+      expect(mockServer.socketsLeave).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.socketsJoin).toHaveBeenCalledWith('ABCDEF');
+      expect(mockServer.emit).not.toHaveBeenCalledWith('room:player-left', expect.anything());
+    });
+  });
+
+  describe('handleLeave - not_found outcome', () => {
+    it('emits an error when the leave outcome is not_found', async () => {
+      roomService.getPlayer.mockResolvedValue(mockPlayers[0]);
+      roomService.leaveRoom.mockResolvedValue('not_found');
+
+      await gateway.handleLeave(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '你不在该房间中',
+      });
+      expect(mockServer.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleKick - error path', () => {
+    it('forwards kickPlayer service errors to the client', async () => {
+      roomService.kickPlayer.mockResolvedValue({ error: '仅房主可以踢人' });
+
+      await gateway.handleKick(mockClient, {
+        roomCode: 'ABCDEF',
+        targetUserId: 'user-3',
+      });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '仅房主可以踢人',
+      });
+      expect(mockServer.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleStart - error path', () => {
+    it('forwards startGame service errors to the client', async () => {
+      roomService.startGame.mockResolvedValue({ error: '仅房主可以开始游戏' });
+
+      await gateway.handleStart(mockClient, { roomCode: 'ABCDEF' });
+
+      expect(mockClient.emit).toHaveBeenCalledWith('room:error', {
+        code: 'ROOM_ERROR',
+        message: '仅房主可以开始游戏',
+      });
+      expect(mockServer.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handlePlayerUpdate', () => {
+    it('broadcasts player:updated to every room the user belongs to', async () => {
+      roomService.getUserRooms.mockResolvedValue(['ABCDEF', 'XYZXYZ']);
+
+      await gateway.handlePlayerUpdate(mockClient, {
+        nickName: '新昵称',
+        avatarUrl: 'https://example.com/new.png',
+      });
+
+      expect(roomService.updatePlayerInfo).toHaveBeenCalledWith('user-2', {
+        nickName: '新昵称',
+        avatarUrl: 'https://example.com/new.png',
+      });
+      expect(mockClient.to).toHaveBeenCalledWith('ABCDEF');
+      expect(mockClient.to).toHaveBeenCalledWith('XYZXYZ');
+      expect(mockClient.emit).toHaveBeenCalledWith('player:updated', {
+        userId: 'user-2',
+        nickName: '新昵称',
+        avatarUrl: 'https://example.com/new.png',
+      });
+    });
+  });
+
+  describe('notifyClientsAfterSettingsUpdate', () => {
+    it('omits isRandomSeat from the payload when it is not provided', async () => {
+      const broadcastSpy = jest.spyOn(gateway, 'broadcastRoomState').mockResolvedValue(null);
+
+      await gateway.notifyClientsAfterSettingsUpdate('ABCDEF', 6, mockRoom.roleConfig);
+
+      expect(mockServer.emit).toHaveBeenCalledWith('room:settings-updated', {
+        maxPlayers: 6,
+        roleConfig: mockRoom.roleConfig,
+      });
+      broadcastSpy.mockRestore();
+    });
+  });
+
+  describe('broadcastRoomState - adapter edge cases', () => {
+    it('reports zero clients when the adapter has no room entry', async () => {
+      (gateway as any).server.adapter.rooms = undefined;
+      roomService.getRoom.mockResolvedValue(mockRoom);
+      roomService.getPlayers.mockResolvedValue(mockPlayers);
+      const debugSpy = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+
+      await gateway.broadcastRoomState('ABCDEF');
+
+      expect(mockServer.emit).toHaveBeenCalledWith('room:state', {
+        room: mockRoom,
+        players: mockPlayers,
+      });
+      debugSpy.mockRestore();
+    });
   });
 });

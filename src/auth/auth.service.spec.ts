@@ -1,4 +1,10 @@
-import { BadRequestException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  GatewayTimeoutException,
+  Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
@@ -213,6 +219,155 @@ describe('AuthService', () => {
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateProfile nickName handling', () => {
+    it('updates only the nickName when no avatarUrl is given', async () => {
+      prisma.user.update.mockResolvedValue({
+        id: 'user-id',
+        nickName: '新昵称',
+        avatarUrl: 'https://bucket.oss-cn-hangzhou.aliyuncs.com/avatars/old.jpg',
+      });
+
+      const result = await service.updateProfile('user-id', { nickName: '新昵称' });
+
+      expect(result.nickName).toBe('新昵称');
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-id' },
+        data: { nickName: '新昵称' },
+      });
+    });
+
+    it('updates nickName and avatarUrl together', async () => {
+      const avatarUrl = 'https://bucket.oss-cn-hangzhou.aliyuncs.com/avatars/user-id/2.jpg';
+      prisma.user.update.mockResolvedValue({
+        id: 'user-id',
+        nickName: '小明',
+        avatarUrl,
+      });
+
+      const result = await service.updateProfile('user-id', {
+        nickName: '小明',
+        avatarUrl,
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-id' },
+        data: { nickName: '小明', avatarUrl },
+      });
+      expect(result.avatarUrl).toBe(avatarUrl);
+    });
+
+    it('rejects any non-empty avatarUrl when no AVATAR_URL_PREFIX is configured', async () => {
+      const local = new AuthService(
+        prisma as unknown as PrismaService,
+        redis as unknown as RedisService,
+        {
+          get: jest.fn(() => undefined),
+        } as unknown as ConfigService,
+        jwtService as unknown as JwtService,
+      );
+
+      await expect(
+        local.updateProfile('user-id', {
+          avatarUrl: 'https://bucket.oss-cn-hangzhou.aliyuncs.com/avatars/x.jpg',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('code2Session configuration guards', () => {
+    function createServiceWith(values: Record<string, string | number>): AuthService {
+      return new AuthService(
+        prisma as unknown as PrismaService,
+        redis as unknown as RedisService,
+        {
+          get: jest.fn((key: string) => values[key]),
+        } as unknown as ConfigService,
+        jwtService as unknown as JwtService,
+      );
+    }
+
+    it('rejects login when WX_APPID is not configured', async () => {
+      const local = createServiceWith({ WX_SECRET: 'wx-secret' });
+
+      await expect(local.login('wx-code')).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects login when WX_SECRET is not configured', async () => {
+      const local = createServiceWith({ WX_APPID: 'wx-app-id' });
+
+      await expect(local.login('wx-code')).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['empty secret', ''],
+      ['whitespace secret', '   '],
+      ['placeholder secret', 'placeholder'],
+      ['template secret', 'YOUR_WX_SECRET_HERE'],
+    ])('rejects login with an invalid WX_SECRET (%s)', async (_case, secret) => {
+      const local = createServiceWith({ WX_APPID: 'wx-app-id', WX_SECRET: secret });
+
+      await expect(local.login('wx-code')).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it('maps a fetch timeout (AbortError) to GatewayTimeoutException', async () => {
+      const local = createServiceWith({
+        WX_APPID: 'wx-app-id',
+        WX_SECRET: 'wx-secret',
+        WX_LOGIN_TIMEOUT_MS: 10,
+      });
+      const abortError = Object.assign(new Error('The operation was aborted'), {
+        name: 'AbortError',
+      });
+      fetchSpy = jest.spyOn(global, 'fetch').mockRejectedValue(abortError);
+
+      await expect(local.login('wx-code')).rejects.toBeInstanceOf(GatewayTimeoutException);
+      expect(prisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it('maps a generic fetch failure to ServiceUnavailableException', async () => {
+      const local = createServiceWith({
+        WX_APPID: 'wx-app-id',
+        WX_SECRET: 'wx-secret',
+        WX_LOGIN_TIMEOUT_MS: 10,
+      });
+      fetchSpy = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+
+      await expect(local.login('wx-code')).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+      expect(prisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a WeChat response carrying an errcode', async () => {
+      mockWeChatResponse({ errcode: 40029, errmsg: 'invalid code' });
+
+      await expect(service.login('wx-code')).rejects.toBeInstanceOf(WeChatApiException);
+      expect(prisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-object (array) WeChat response', async () => {
+      mockWeChatResponse([{ openid: 'open-id', session_key: 'k' }]);
+
+      await expect(service.login('wx-code')).rejects.toBeInstanceOf(WeChatApiException);
+      expect(prisma.user.upsert).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the default login timeout when WX_LOGIN_TIMEOUT_MS is unset', async () => {
+      const local = createServiceWith({ WX_APPID: 'wx-app-id', WX_SECRET: 'wx-secret' });
+      mockWeChatResponse({ openid: 'open-id', session_key: 'session-key' });
+      prisma.user.upsert.mockResolvedValue({ id: 'user-id', nickName: null, avatarUrl: null });
+      jwtService.sign.mockReturnValue('jwt-token');
+
+      await expect(local.login('wx-code')).resolves.toEqual(
+        expect.objectContaining({ token: 'jwt-token' }),
+      );
     });
   });
 });

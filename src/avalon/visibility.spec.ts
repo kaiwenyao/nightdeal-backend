@@ -408,3 +408,110 @@ describe('Visibility', () => {
     });
   });
 });
+
+// ==================== 以下为追加的覆盖率测试（不影响以上原有用例） ====================
+
+import { shouldPublicTeamVote, isAnonymousQuestVote } from './visibility';
+import { AvalonRole } from './types';
+
+describe('Visibility edge cases', () => {
+  function createPlayers(): AvalonPlayer[] {
+    return [
+      { id: 'p1', name: 'Merlin', seatNo: 1, isHost: true, isConnected: true, role: 'Merlin', faction: 'good' },
+      { id: 'p2', name: 'Percival', seatNo: 2, isHost: false, isConnected: true, role: 'Percival', faction: 'good' },
+      { id: 'p3', name: 'Loyal', seatNo: 3, isHost: false, isConnected: true, role: 'LoyalServant', faction: 'good' },
+      { id: 'p4', name: 'Morgana', seatNo: 4, isHost: false, isConnected: true, role: 'Morgana', faction: 'evil' },
+      { id: 'p5', name: 'Assassin', seatNo: 5, isHost: false, isConnected: true, role: 'Assassin', faction: 'evil' },
+    ];
+  }
+
+  function createState(players: AvalonPlayer[], config?: Partial<AvalonGameConfig>): AvalonGameState {
+    return {
+      roomId: 'test-room',
+      phase: 'role_reveal',
+      players,
+      config: { ...DEFAULT_AVALON_CONFIG, ...config },
+      leaderIndex: 0,
+      round: 1,
+      rejectedTeamVoteCount: 0,
+      proposedTeam: [],
+      teamVotes: {},
+      questActions: {},
+      questHistory: [],
+      goodScore: 0,
+      evilScore: 0,
+      assassinId: 'p5',
+      merlinId: 'p1',
+    };
+  }
+
+  it('throws when the viewer is not in the game', () => {
+    const state = createState(createPlayers());
+
+    expect(() => getPlayerView(state, 'p99')).toThrow('玩家不存在');
+  });
+
+  it('returns empty visible info for a player without a role', () => {
+    const players = createPlayers().map(p => ({ ...p, role: undefined, faction: undefined }));
+    const state = createState(players);
+
+    const view = getPlayerView(state, 'p1');
+
+    expect(view.myRole).toBeUndefined();
+    expect(view.myFaction).toBeUndefined();
+    expect(view.visibleInfo).toEqual({});
+  });
+
+  it('returns empty visible info for an unrecognized role', () => {
+    const players = createPlayers().map(p =>
+      p.id === 'p1' ? { ...p, role: 'Wizard' as unknown as AvalonRole } : p,
+    );
+    const state = createState(players);
+
+    const view = getPlayerView(state, 'p1');
+
+    expect(view.myRole).toBe('Wizard');
+    expect(view.visibleInfo).toEqual({});
+  });
+
+  it('shouldPublicTeamVote mirrors the config flag', () => {
+    expect(shouldPublicTeamVote({ ...DEFAULT_AVALON_CONFIG, publicTeamVote: true })).toBe(true);
+    expect(shouldPublicTeamVote({ ...DEFAULT_AVALON_CONFIG, publicTeamVote: false })).toBe(false);
+  });
+
+  it('isAnonymousQuestVote mirrors the config flag', () => {
+    expect(isAnonymousQuestVote({ ...DEFAULT_AVALON_CONFIG, anonymousQuestVote: true })).toBe(true);
+    expect(isAnonymousQuestVote({ ...DEFAULT_AVALON_CONFIG, anonymousQuestVote: false })).toBe(false);
+  });
+
+  it('anonymous team vote view omits players who have not voted', () => {
+    const state = createState(createPlayers(), { publicTeamVote: false });
+    state.teamVotes = { p2: 'reject' };
+
+    const view = getTeamVoteView(state, 'p1');
+
+    expect(view).toEqual({ p2: 'unknown' });
+  });
+
+  it('merlin skips players without a faction', () => {
+    const players = createPlayers().map(p =>
+      p.id === 'p5' ? { ...p, faction: undefined } : p,
+    );
+    const state = createState(players);
+
+    const view = getPlayerView(state, 'p1');
+
+    expect(view.visibleInfo.merlinSees).toEqual(['p4']);
+  });
+
+  it('evil players skip companions without a faction', () => {
+    const players = createPlayers().map(p =>
+      p.id === 'p4' ? { ...p, faction: undefined } : p,
+    );
+    const state = createState(players);
+
+    const view = getPlayerView(state, 'p5');
+
+    expect(view.visibleInfo.evilCompanions).toEqual([]);
+  });
+});

@@ -851,3 +851,142 @@ describe('Game Engine', () => {
     });
   });
 });
+
+// ==================== 以下为追加的覆盖率测试（不影响以上原有用例） ====================
+
+import {
+  getPlayerFaction,
+  isEvilRole,
+} from './game-engine';
+
+describe('Game Engine validation edge cases', () => {
+  function buildAssassinationState(): AvalonGameState {
+    return {
+      roomId: 'test-room',
+      phase: 'assassination',
+      players: [
+        { id: 'p1', name: 'Merlin', seatNo: 1, isHost: true, isConnected: true, role: 'Merlin', faction: 'good' },
+        { id: 'p2', name: 'P2', seatNo: 2, isHost: false, isConnected: true, role: 'Percival', faction: 'good' },
+        { id: 'p3', name: 'Loyal', seatNo: 3, isHost: false, isConnected: true, role: 'LoyalServant', faction: 'good' },
+        { id: 'p4', name: 'Morgana', seatNo: 4, isHost: false, isConnected: true, role: 'Morgana', faction: 'evil' },
+        { id: 'p5', name: 'Assassin', seatNo: 5, isHost: false, isConnected: true, role: 'Assassin', faction: 'evil' },
+      ],
+      config: DEFAULT_AVALON_CONFIG,
+      leaderIndex: 0,
+      round: 5,
+      rejectedTeamVoteCount: 0,
+      proposedTeam: [],
+      teamVotes: {},
+      questActions: {},
+      questHistory: [],
+      goodScore: 3,
+      evilScore: 1,
+      assassinId: 'p5',
+      merlinId: 'p1',
+    };
+  }
+
+  describe('generateRoles count validation', () => {
+    it('rejects when good roles exceed the faction count (duplicated entries)', () => {
+      const config: AvalonGameConfig = {
+        ...DEFAULT_AVALON_CONFIG,
+        roles: ['Merlin', 'Percival', 'LoyalServant', 'Merlin', 'Assassin'],
+      };
+
+      expect(() => generateRoles(5, config)).toThrow('好人角色数量(4)超过好人数量(3)');
+    });
+
+    it('rejects when evil roles exceed the faction count (duplicated entries)', () => {
+      const config: AvalonGameConfig = {
+        ...DEFAULT_AVALON_CONFIG,
+        roles: ['Merlin', 'Assassin', 'Assassin', 'Assassin'],
+      };
+
+      expect(() => generateRoles(5, config)).toThrow('邪恶角色数量(3)超过邪恶数量(2)');
+    });
+  });
+
+  describe('getFaction unknown role', () => {
+    it('throws for an unknown role', () => {
+      expect(() => getFaction('Sorcerer' as AvalonRole)).toThrow('未知角色: Sorcerer');
+    });
+  });
+
+  describe('getRequiredFailCount validation', () => {
+    it('throws for an unsupported player count', () => {
+      expect(() => getRequiredFailCount(4, 1, DEFAULT_AVALON_CONFIG)).toThrow('不支持 4 人游戏');
+    });
+
+    it('throws for an unsupported round', () => {
+      expect(() => getRequiredFailCount(5, 6, DEFAULT_AVALON_CONFIG)).toThrow('不支持第 6 轮');
+    });
+  });
+
+  describe('submitQuestAction validation', () => {
+    it('throws when the actor is not a registered player', () => {
+      // 未知玩家先通过队伍校验（proposedTeam 直接包含它），随后在玩家查找处失败
+      const state: AvalonGameState = {
+        ...buildAssassinationState(),
+        phase: 'quest_action',
+        proposedTeam: ['p99'],
+      };
+
+      expect(() => submitQuestAction(state, 'p99', 'success')).toThrow('玩家不存在');
+    });
+  });
+
+  describe('assassinate validation', () => {
+    it('throws when the assassin is not a registered player', () => {
+      expect(() => assassinate(buildAssassinationState(), 'p99', 'p1')).toThrow('玩家不存在');
+    });
+
+    it('throws when the assassin targets himself', () => {
+      expect(() => assassinate(buildAssassinationState(), 'p5', 'p5')).toThrow('不能刺杀自己');
+    });
+
+    it('throws when the target is evil', () => {
+      expect(() => assassinate(buildAssassinationState(), 'p5', 'p4')).toThrow('不能刺杀邪恶阵营玩家');
+    });
+  });
+
+  describe('getLeaderId validation', () => {
+    it('throws when there are no players', () => {
+      const state: AvalonGameState = { ...buildAssassinationState(), players: [] };
+
+      expect(() => getLeaderId(state)).toThrow('没有玩家');
+    });
+
+    it('throws when the leader index is out of bounds', () => {
+      const state: AvalonGameState = { ...buildAssassinationState(), leaderIndex: 99 };
+
+      expect(() => getLeaderId(state)).toThrow('队长索引越界');
+    });
+  });
+
+  describe('getQuestConfig', () => {
+    it('combines team size and required fail count for the round', () => {
+      expect(getQuestConfig(5, 1, DEFAULT_AVALON_CONFIG)).toEqual({
+        round: 1,
+        teamSize: 2,
+        requiredFailCount: 1,
+      });
+      expect(getQuestConfig(7, 4, DEFAULT_AVALON_CONFIG)).toEqual({
+        round: 4,
+        teamSize: 4,
+        requiredFailCount: 2,
+      });
+    });
+  });
+
+  describe('faction helpers', () => {
+    it('getPlayerFaction mirrors getFaction', () => {
+      expect(getPlayerFaction('Merlin')).toBe('good');
+      expect(getPlayerFaction('Morgana')).toBe('evil');
+    });
+
+    it('isEvilRole identifies evil roles', () => {
+      expect(isEvilRole('Assassin')).toBe(true);
+      expect(isEvilRole('Percival')).toBe(false);
+    });
+  });
+});

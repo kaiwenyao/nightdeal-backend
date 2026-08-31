@@ -32,6 +32,21 @@ describe('SgsRoleAssigner', () => {
       expect(getSgsDefaultConfig(1)).toEqual(SGS_DEFAULT_CONFIGS[2]);
       expect(getSgsDefaultConfig(0)).toEqual(SGS_DEFAULT_CONFIGS[2]);
     });
+
+    it('should fall back to the minimum config for non-finite counts', () => {
+      expect(getSgsDefaultConfig(Number.NaN)).toEqual(SGS_DEFAULT_CONFIGS[2]);
+      expect(getSgsDefaultConfig(Infinity)).toEqual(SGS_DEFAULT_CONFIGS[2]);
+    });
+
+    it('should fall back to the 2-player config when a preset entry is missing', () => {
+      const original = SGS_DEFAULT_CONFIGS[3];
+      delete (SGS_DEFAULT_CONFIGS as any)[3];
+      try {
+        expect(getSgsDefaultConfig(3)).toEqual(SGS_DEFAULT_CONFIGS[2]);
+      } finally {
+        SGS_DEFAULT_CONFIGS[3] = original;
+      }
+    });
   });
 
   describe('assignSgsRoles', () => {
@@ -251,6 +266,50 @@ describe('SgsRoleAssigner', () => {
 
       expect(result.filter(r => r.role === '忠臣')).toHaveLength(2);
       expect(result.filter(r => r.role === '反贼')).toHaveLength(1);
+    });
+
+    it('should throw when a four-player pairing config meets a seat outside 1-4', () => {
+      const players = [
+        { seatNo: 1, userId: 'user1' },
+        { seatNo: 2, userId: 'user2' },
+        { seatNo: 3, userId: 'user3' },
+        { seatNo: 9, userId: 'user9' },
+      ];
+      const pairingConfig = { monarch: 0, loyalist: 2, rebel: 2, traitor: 0 };
+
+      expect(() => assignSgsRoles(players, pairingConfig)).toThrow(
+        '四人局期望座位号为 1-4，实际为 9',
+      );
+    });
+
+    it('should not treat non-pairing configs without a monarch as four-player pairings', () => {
+      const players = Array.from({ length: 4 }, (_, i) => ({
+        seatNo: i + 1,
+        userId: `user${i + 1}`,
+      }));
+      const noMonarchConfig = { monarch: 0, loyalist: 1, rebel: 2, traitor: 1 };
+
+      const result = assignSgsRoles(players, noMonarchConfig);
+
+      expect(result.filter(r => r.role === '主公')).toHaveLength(0);
+      expect(result.filter(r => r.role === '忠臣')).toHaveLength(1);
+      expect(result.filter(r => r.role === '反贼')).toHaveLength(2);
+      expect(result.filter(r => r.role === '内奸')).toHaveLength(1);
+    });
+
+    it('should not treat a monarch-free pairing candidate with a traitor as four-player pairings', () => {
+      const players = Array.from({ length: 5 }, (_, i) => ({
+        seatNo: i + 1,
+        userId: `user${i + 1}`,
+      }));
+      // monarch: 0, loyalist: 2, rebel: 2 pairs only at exactly 4 players;
+      // with 5 players the traitor makes the total match but the shape differ.
+      const fivePlayerConfig = { monarch: 0, loyalist: 2, rebel: 2, traitor: 1 };
+
+      const result = assignSgsRoles(players, fivePlayerConfig);
+
+      expect(result).toHaveLength(5);
+      expect(result.filter(r => r.role === '内奸')).toHaveLength(1);
     });
   });
 });
